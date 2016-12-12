@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
+from scipy.spatial.distance import cosine as cosd
 
 # Open-Set Nearest Neighbor Distance Ration for Multi-Class Classification Framework.
 
 
 class OpenNNDR(object):
 
-    def __init__(self, slt_ptg, vld_slt_ptg, rt_stp):
+    def __init__(self, slt_ptg, vld_slt_ptg, rt_stp, lmda):
 
         # Defining the ration-threhold paramter.
         self.rt = 0.0
@@ -16,7 +17,15 @@ class OpenNNDR(object):
         # ...of finding the empiricaly optimal rt (ration-therhold) value.
         self.slt_ptg = slt_ptg
         self.vld_slt_ptg = vld_slt_ptg
+
+        if rt_stp < 0.0 or rt_stp > 1.0:
+            raise Exception("The ratio-therhold optimisation step value should in range 0.0 to 1.0")
         self.rt_stp = rt_stp
+
+        if rt_stp < 0.0 or rt_stp > 1.0:
+            raise Exception("The ratio-therhold optimisation step value should in range 0.0 to 1.0")
+
+        self.lmda = lmda
 
     def split(self, y):
 
@@ -72,14 +81,62 @@ class OpenNNDR(object):
 
         return trn_inds, kvld_inds, ukwn_inds, unq_cls_tgs
 
-    def optRT(self):
-        pass
+    def score_rt(self, pre_y, exp_y, kvld_inds, ukwn_inds):
+
+        # Normilized Accuracy will be used for this implementation. That is, for the multi-class...
+        # ...classification, the correct-prediction over the total known and unkown predictions...
+        # ...respectively. The normalized-accuracy NA is the weightied sum of the two accuracies.
+        crrt_knw = np.sum(np.where(np.in1d(pre_y[kvld_inds], exp_y[kvld_inds]), 1.0, 0.0))
+        uknw_crrt = np.sum(np.where(np.in1d(pre_y[ukwn_inds], exp_y[ukwn_inds]), 1.0, 0.0))
+
+        # Calculating Known-Samples Accuracy and Uknown-Samples Accuracy.
+        AKS = crrt_knw / float(pre_y[kvld_inds].shape[0])
+        AUS = uknw_crrt / float(pre_y[ukwn_inds].shape[0])
+
+        # Calculating (and returing) the Nromalized Accuracy.
+        return self.lmda * AKS + (1 - self.lmda) * AUS
 
     def fit(self, X, y):
 
         # Spliting the Training and Validation (Known and Uknown).
-        trn_inds, kvld_inds, ukwn_inds, unq_cls_tgs = self.split(y)
+        trn_inds_lst, kvld_inds_lst, ukwn_inds_lst, unq_cls_tgs = self.split(y)
 
+        # Separating the samples for each class. The cls_lst is a list of numpy arrays. Every,...
+        # ...array is a list of vector for a specifc class tag.
+        # cls_lst = [X[np.where(y == ctg)[0], :] for ctg in unq_cls_tgs]
+
+        # Optimising the rt threshold for every split.
+        for trn_inds, kvld_inds, ukwn_inds in zip(trn_inds_lst, kvld_inds_lst, ukwn_inds_lst):
+
+            # Normilize all data for caclulating faster the Cosine Distance/Similarity.
+            trvl_X = X[np.hstack([trn_inds, kvld_inds, ukwn_inds])]
+            norm_X = np.divide(
+                    trvl_X,
+                    np.sqrt(
+                        np.diag(np.dot(trvl_X, trvl_X.T)),
+                        dtype=np.float
+                    ).reshape(trvl_X.shape[0], 1)
+                )
+
+            # Separating the samples for each class. The cls_lst is a list of numpy arrays...
+            # ...Every array is a list of vector for a specifc class tag.
+            cls_lst = [X[np.where(y[trn_inds] == ctg)[0], :] for ctg in unq_cls_tgs]
+
+            # Keeping the rt with the besr NA.
+            for rt in np.arange(0.5, 1.0, self.rt_stp):
+
+                # Classifing validation samples (Known and Uknown).
+                kvld_Dz = np.tril(1.0 - np.matmul(norm_X[trn_inds, :], norm_X[kvld_inds, :].T), -1)
+                ukwn_Dz = np.tril(1.0 - np.matmul(norm_X[trn_inds, :], norm_X[ukwn_inds, :].T), -1)
+                # tril_indices
+
+
+
+
+
+
+
+                self.rt
 
 
 
