@@ -10,9 +10,6 @@ class OpenNNDR(object):
 
     def __init__(self, slt_ptg, ukwn_slt_ptg, rt_stp, lmda):
 
-        # Defining the ration-threhold paramter.
-        self.rt = 0.0
-
         # Definind the hyper-paramter arguments which will be used for the optimisation process...
         # ...of finding the empiricaly optimal rt (ration-therhold) value.
         self.slt_ptg = slt_ptg
@@ -92,17 +89,17 @@ class OpenNNDR(object):
 
         return trn_inds, kvld_inds, ukwn_inds, unq_cls_tgs
 
-    def score_rt(self, pre_y, exp_y, kvld_inds, ukwn_inds):
+    def score_rt(self, kvld_pre, uknw_pre, kvld_exp, uknw_exp):
 
         # Normilized Accuracy will be used for this implementation. That is, for the multi-class...
         # ...classification, the correct-prediction over the total known and unkown predictions...
         # ...respectively. The normalized-accuracy NA is the weightied sum of the two accuracies.
-        crrt_knw = np.sum(np.where(np.in1d(pre_y[kvld_inds], exp_y[kvld_inds]), 1.0, 0.0))
-        uknw_crrt = np.sum(np.where(np.in1d(pre_y[ukwn_inds], exp_y[ukwn_inds]), 1.0, 0.0))
+        crrt_knw = np.sum(np.equal(kvld_pre, kvld_exp))
+        uknw_crrt = np.sum(np.equal(uknw_pre, uknw_exp))
 
         # Calculating Known-Samples Accuracy and Uknown-Samples Accuracy.
-        AKS = crrt_knw / float(pre_y[kvld_inds].shape[0])
-        AUS = uknw_crrt / float(pre_y[ukwn_inds].shape[0])
+        AKS = crrt_knw / float(kvld_pre.size)
+        AUS = uknw_crrt / float(uknw_pre.size)
 
         # Calculating (and returing) the Nromalized Accuracy.
         return self.lmda * AKS + (1 - self.lmda) * AUS
@@ -112,29 +109,34 @@ class OpenNNDR(object):
         # Spliting the Training and Validation (Known and Uknown).
         trn_inds_lst, kvld_inds_lst, ukwn_inds_lst, unq_cls_arr = self.split(y)
 
-        # Separating the samples for each class. The cls_lst is a list of numpy arrays. Every,...
-        # ...array is a list of vector for a specifc class tag.
-        # cls_lst = [X[np.where(y == ctg)[0], :] for ctg in unq_cls_tgs]
+        # Optimising the rt threshold for every split. Keeping the rt with the best NA.
 
-        # Optimising the rt threshold for every split.
-        for trn_inds, kvld_inds, ukwn_inds in zip(trn_inds_lst, kvld_inds_lst, ukwn_inds_lst):
+        rtz = np.zeros(trn_inds_lst, dtype=np.float)
+        NAz = np.zeros(trn_inds_lst, dtype=np.float)
 
-            # Normilize all data for caclulating faster the Cosine Distance/Similarity.
-            trvl_X = X[np.hstack([trn_inds, kvld_inds, ukwn_inds])]
-            norm_X = np.divide(
-                    trvl_X,
-                    np.sqrt(
-                        np.diag(np.dot(trvl_X, trvl_X.T)),
-                        dtype=np.float
-                    ).reshape(trvl_X.shape[0], 1)
-                )
+        for rt_i, rt in enumerate(np.arange(0.5, 1.0, self.rt_stp)):
 
-            # Keeping the rt with the besr NA.
-            for rt in np.arange(0.5, 1.0, self.rt_stp):
+            # Calculating prediction per split.
+
+            kvld_pre, uknw_pre, kvld_exp, uknw_exp = list(), list()
+
+            for trn_inds, kvld_inds, ukwn_inds in zip(trn_inds_lst, kvld_inds_lst, ukwn_inds_lst):
+
+                # Normilize all data for caclulating faster the Cosine Distance/Similarity.
+                trvl_X = X[np.hstack([trn_inds, kvld_inds, ukwn_inds])]
+                norm_X = np.divide(
+                        trvl_X,
+                        np.sqrt(
+                            np.diag(np.dot(trvl_X, trvl_X.T)),
+                            dtype=np.float
+                        ).reshape(trvl_X.shape[0], 1)
+                    )
 
                 # Classifing validation samples (Known and Uknown).
-                kvld_mins = np.zeros((len(ukwn_inds_lst), kvld_inds.size), dtype=float)
-                ukwn_mins = np.zeros((len(ukwn_inds_lst), ukwn_inds.size), dtype=float)
+                kvld_Ds = np.zeros((len(ukwn_inds_lst), kvld_inds.size), dtype=np.float)
+                pre_kvld = np.zeros((len(ukwn_inds_lst), kvld_inds.size), dtype=np.float)
+                ukwn_Ds = np.zeros((len(ukwn_inds_lst), ukwn_inds.size), dtype=np.float)
+                pre_ukwn = np.zeros((len(ukwn_inds_lst), ukwn_inds.size), dtype=np.float)
 
                 for i, ctg in enumerate(unq_cls_tgs):
 
@@ -142,44 +144,57 @@ class OpenNNDR(object):
                     cls_tr_inds = np.where(y[trn_inds] == ctg)
 
                     # Calculating the minimum distancies.
-                    kvld_mins[i, :] = np.min(
-                        1.0 - np.matmul(norm_X[cls_tr_inds, :], norm_X[kvld_inds, :].T),
-                        axis=1
+                    kvld_Ds[i, :] = 1.0 - np.matmul(
+                        norm_X[cls_tr_inds, :], norm_X[kvld_inds, :].T
                     )
-                    ukwn_mins[i, :] = np.min(
-                        1.0 - np.matmul(norm_X[cls_tr_inds, :], norm_X[ukwn_inds, :].T)
+
+                    ukwn_Ds[i, :] = 1.0 - np.matmul(
+                        norm_X[cls_tr_inds, :], norm_X[ukwn_inds, :].T
                     )
 
                 # ###Calculating R and classify based on this rt
 
                 # Getting the first min distance.
-                min_kvld_idx = np.argmin(kvld_mins)
-                min_ukwn_idx = np.argmin(ukwn_mins)
-                min_kvld = kvld_mins[min_kvld_idx]
-                min_ukwn = ukwn_mins[min_ukwn_idx]
+                min_kvld_idx = np.argmin(kvld_Ds, axis=1)  # == min_kvld_idx
+                min_ukwn_idx = np.argmin(ukwn_Ds, axis=1)  # == min_ukwn_idx
+                kvld_mins = kvld_Ds[min_kvld_idx]
+                min_ukwn = ukwn_Ds[min_ukwn_idx]
 
-                # Getting the second min distance and calculatig the R.
+                # Setting Inf the fist min distances posistion for finding the second mins.
                 kvld_mins[min_kvld_idx] = np.Inf
                 ukwn_mins[min_ukwn_idx] = np.Inf
 
-                knR = min_kvld / np.argmin(kvld_mins)
-                uknR = min_ukwn / np.argmin(ukwn_mins)
+                # Calculating R rationz.
+                knR = min_kvld / np.min(kvld_mins, axis=1)
+                uknR = min_ukwn / np.min(ukwn_mins, axis=1)
 
-                if knR < rt:
-                    pass
+                # Calculating the Predicition based on this rt threshold.
+                pre_kvld = min_kvld_idx
+                pre_ukwn = min_ukwn_idx
+                pre_kvld[np.where(knR > rt)] = 0
+                pre_ukwn[np.where(uknR > rt)] = 0
 
-                if uknR > rt:
-                    pass
+                # Keeping prediction prediction per split and expected per split.
+                kvld_pre.append(pre_kvld)
+                uknw_pre.append(pre_ukwn)
+                kvld_exp.append(y[kvld_inds])
+                uknw_exp.append(y[ukwn_inds])
 
+            # Calculating and keeping the NA Score for this rt threshold.
+            rtz[rtz_i] = rt
+            NAz[rtz_i] = self.score_rt(
+                np.hstack(kvld_pre),
+                np.hstack(uknw_pre),
+                np.hstack(kvld_exp),
+                np.hstack(uknw_exp)
+            )
 
+        # Separating the samples for each class. The cls_lst is a list of numpy arrays. Every,...
+        # ...array is a list of vector for a specifc class tag.
+        # cls_lst = [X[np.where(y == ctg)[0], :] for ctg in unq_cls_tgs]
 
-
-
-
-
-
-
-
+        # Returin the document vector per class and the rt that maximizes NA.
+        return
 
     def predict(self, X):
         pass
