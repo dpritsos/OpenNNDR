@@ -39,7 +39,6 @@ class OpenNNDR(object):
         # Calculating the number of Unique iteration depeding on Uknown number of splits.
         fc = np.math.factorial
         unq_itr = fc(unq_cls_tgs.size) / (fc(ukwn_cls_num) * fc(unq_cls_tgs.size - ukwn_cls_num))
-        print unq_itr
 
         # List of arrays of indeces, one list for each unique iteration.
         trn_inds, kvld_inds, ukwn_inds, tgs_combs = list(), list(), list(), list()
@@ -87,10 +86,10 @@ class OpenNNDR(object):
             np.random.shuffle(knwn_idns)
 
             # Getting the training-samples indeces.
-            trn_inds.append(knwn_idns[0:knwn_idns_num])
+            trn_inds.append(knwn_idns[0:tr_idns_num])
 
             # Getting the known validation-samples indeces.
-            kvld_inds.append(knwn_idns[knwn_idns_num::])
+            kvld_inds.append(knwn_idns[tr_idns_num::])
 
             # When unique iteration have reached the requiered number.
             if itr == unq_itr:
@@ -116,26 +115,31 @@ class OpenNNDR(object):
     def fit(self, X, y):
 
         # Spliting the Training and Validation (Known and Uknown).
-        trn_inds_lst, kvld_inds_lst, ukwn_inds_lst, unq_cls_arr = self.split(y)
+        trn_inds_lst, kvld_inds_lst, ukwn_inds_lst, unq_ctg_arr = self.split(y)
+
+        # Calculating the range of rt values to be selected for optimisation.
+        rt_range = np.arange(0.5, 1.0, self.rt_stp)
 
         # Optimising the rt threshold for every split. Keeping the rt with the best NA.
-
-        rtz = np.zeros(trn_inds_lst, dtype=np.float)
-        NAz = np.zeros(trn_inds_lst, dtype=np.float)
+        rtz = np.zeros(rt_range.size, dtype=np.float)
+        NAz = np.zeros(rt_range.size, dtype=np.float)
 
         for rt_i, rt in enumerate(np.arange(0.5, 1.0, self.rt_stp)):
 
             # Calculating prediction per split.
 
-            kvld_pre, uknw_pre, kvld_exp, uknw_exp = list(), list()
+            kvld_pre, uknw_pre, kvld_exp, uknw_exp = list(), list(), list(), list()
 
             for trn_inds, kvld_inds, ukwn_inds in zip(trn_inds_lst, kvld_inds_lst, ukwn_inds_lst):
 
+                # Getting the unique training-set class tags for this split.
+                unq_trn_ctgs = np.unique(y[trn_inds])
+
                 # Classifing validation samples (Known and Uknown).
-                kvld_Ds = np.zeros((len(ukwn_inds_lst), kvld_inds.size), dtype=np.float)
-                pre_kvld = np.zeros((len(ukwn_inds_lst), kvld_inds.size), dtype=np.float)
-                ukwn_Ds = np.zeros((len(ukwn_inds_lst), ukwn_inds.size), dtype=np.float)
-                pre_ukwn = np.zeros((len(ukwn_inds_lst), ukwn_inds.size), dtype=np.float)
+                kvld_mds_pcls = np.zeros((unq_trn_ctgs.size, kvld_inds.size), dtype=np.float)
+                pre_kvld = np.zeros((unq_trn_ctgs.size, kvld_inds.size), dtype=np.float)
+                ukwn_mds_pcls = np.zeros((unq_trn_ctgs.size, ukwn_inds.size), dtype=np.float)
+                pre_ukwn = np.zeros((unq_trn_ctgs.size, ukwn_inds.size), dtype=np.float)
 
                 # Normilize all data for caclulating faster the Cosine Distance/Similarity.
                 trvl_X = X[np.hstack([trn_inds, kvld_inds, ukwn_inds])]
@@ -147,41 +151,43 @@ class OpenNNDR(object):
                         ).reshape(trvl_X.shape[0], 1)
                     )
 
-                for i, ctg in enumerate(unq_cls_tgs):
+                for i, ctg in enumerate(unq_trn_ctgs):
 
                     # For this class-tag training inds.
-                    cls_tr_inds = np.where(y[trn_inds] == ctg)
+                    cls_tr_inds = np.where(y[trn_inds] == ctg)[0]
 
                     # Calculating the distancies.
-                    kvld_Ds[i, :] = 1.0 - np.matmul(
-                        norm_X[cls_tr_inds, :], norm_X[kvld_inds, :].T
+                    kvld_mds_pcls[i, :] = 1.0 - np.min(
+                        np.matmul(norm_X[cls_tr_inds, :], norm_X[kvld_inds, :].T),
+                        axis=0
                     )
 
-                    ukwn_Ds[i, :] = 1.0 - np.matmul(
-                        norm_X[cls_tr_inds, :], norm_X[ukwn_inds, :].T
+                    ukwn_mds_pcls[i, :] = 1.0 - np.min(
+                        np.matmul(norm_X[cls_tr_inds, :], norm_X[ukwn_inds, :].T),
+                        axis=0
                     )
 
                 # ###Calculating R and classify based on this rt
 
                 # Getting the first min distance.
-                min_kvld_idx = np.argmin(kvld_Ds, axis=1)  # == min_kvld_idx
-                min_ukwn_idx = np.argmin(ukwn_Ds, axis=1)  # == min_ukwn_idx
-                kvld_mins = kvld_Ds[min_kvld_idx]
-                min_ukwn = ukwn_Ds[min_ukwn_idx]
+                min_kvld_idx = np.argmin(kvld_mds_pcls, axis=0)  # == min_kvld_idx
+                min_ukwn_idx = np.argmin(ukwn_mds_pcls, axis=0)  # == min_ukwn_idx
+                kvld_min = kvld_mds_pcls[min_kvld_idx, np.arange(kvld_mds_pcls.shape[1])]
+                min_ukwn = ukwn_mds_pcls[min_ukwn_idx, np.arange(ukwn_mds_pcls.shape[1])]
 
                 # Setting Inf the fist min distances posistion for finding the second mins.
-                kvld_mins[min_kvld_idx] = np.Inf
-                ukwn_mins[min_ukwn_idx] = np.Inf
+                kvld_mds_pcls[min_kvld_idx, np.arange(kvld_mds_pcls.shape[1])] = np.Inf
+                ukwn_mds_pcls[min_ukwn_idx, np.arange(ukwn_mds_pcls.shape[1])] = np.Inf
 
                 # Calculating R rationz.
-                knR = min_kvld / np.min(kvld_mins, axis=1)
-                uknR = min_ukwn / np.min(ukwn_mins, axis=1)
+                knR = kvld_min / np.min(kvld_mds_pcls, axis=0)
+                uknR = min_ukwn / np.min(ukwn_mds_pcls, axis=0)
 
                 # Calculating the Predicition based on this rt threshold.
                 # Check this carefully.
-                pre_kvld = np.array([unq_cls_tgs[min_idx] for min_idx in min_kvld_idx])
+                pre_kvld = np.array([unq_trn_ctgs[min_idx] for min_idx in min_kvld_idx])
                 # Check this carefully.
-                pre_ukwn = np.array([unq_cls_tgs[min_idx] for min_idx in min_ukwn_idx])
+                pre_ukwn = np.array([unq_trn_ctgs[min_idx] for min_idx in min_ukwn_idx])
                 pre_kvld[np.where(knR > rt)] = 0
                 pre_ukwn[np.where(uknR > rt)] = 0
 
@@ -194,8 +200,8 @@ class OpenNNDR(object):
                 uknw_exp.append(y[ukwn_inds])
 
             # Calculating and keeping the NA Score for this rt threshold.
-            rtz[rtz_i] = rt
-            NAz[rtz_i] = self.score_rt(
+            rtz[rt_i] = rt
+            NAz[rt_i] = self.score_rt(
                 np.hstack(kvld_pre),
                 np.hstack(uknw_pre),
                 np.hstack(kvld_exp),
@@ -205,12 +211,15 @@ class OpenNNDR(object):
         # Separating and keeping the samples for each class. The cls_d is a dictionary of numpy...
         # ...arrays. Every array is a list of vector for a specifc class tag, which is also a...
         # ...key value for the dictionary.
-        self.cls_d = dict([(ctg, X[np.where(y == ctg)[0], :]) for ctg in unq_cls_tgs])
+        self.cls_d = dict([(ctg, X[np.where(y == ctg)[0], :]) for ctg in unq_ctg_arr])
 
         # Keeping the rt that maximizes NA.
-        self.rt = rtz[argmin(NAz)]
+        print rtz
+        self.rt = rtz[np.argmax(NAz)]
+        print NAz
+        print self.rt
 
-        return cls_d, rt
+        return self.cls_d, self.rt
 
     def predict(self, X):
         return self._predict(self, X, self.cls_d, self.rt)
@@ -241,7 +250,7 @@ class OpenNNDR(object):
 
         # Getting the first min distance.
         min_pre_Ds_idx = np.argmin(pre_Ds, axis=1)
-        min_pre_Ds = ukwn_Ds[min_pre_Ds_idx]
+        min_pre_Ds = ukwn_mds_pcls[min_pre_Ds_idx]
 
         # Setting Inf the fist min distances posistion for finding the second mins.
         pre_Ds[min_pre_Ds_idx] = np.Inf
@@ -258,28 +267,28 @@ class OpenNNDR(object):
 if __name__ == '__main__':
 
     X, y = list(), list()
-    X.append(np.random.multivariate_normal([0.1, 0.1], [[0.07, 0.02], [0.07, 0.5]], 110))
+    X.append(np.random.multivariate_normal([0.1, 0.1], [[0.007, 0.002], [0.007, 0.005]], 110))
     y.append(np.array([1]*110))
-    X.append(np.random.multivariate_normal([0.2, 0.2], [[0.08, 0.01], [0.5, 0.7]], 150))
+    X.append(np.random.multivariate_normal([5.2, 5.2], [[0.008, 0.001], [0.005, 0.007]], 150))
     y.append(np.array([2]*150))
-    X.append(np.random.multivariate_normal([0.5, 0.3], [[0.01, 0.04], [0.9, 0.5]], 300))
+    X.append(np.random.multivariate_normal([20.5, 20.3], [[0.003, 0.004], [0.009, 0.005]], 300))
     y.append(np.array([3]*300))
-    X.append(np.random.multivariate_normal([0.8, 0.1], [[0.05, 0.01], [0.07, 0.5]], 200))
+    X.append(np.random.multivariate_normal([60.8, 50.1], [[0.005, 0.001], [0.007, 0.005]], 200))
     y.append(np.array([4]*200))
-    X.append(np.random.multivariate_normal([0.1, 0.7], [[0.07, 0.07], [0.8, 0.05]], 280))
+    X.append(np.random.multivariate_normal([1.1, 100.7], [[0.007, 0.007], [0.008, 0.005]], 280))
     y.append(np.array([5]*280))
-    X.append(np.random.multivariate_normal([0.9, 0.1], [[0.09, 0.01], [0.6, 0.1]], 230))
+    X.append(np.random.multivariate_normal([50.9, 7.1], [[0.009, 0.001], [0.006, 0.001]], 230))
     y.append(np.array([6]*230))
-    X.append(np.random.multivariate_normal([0.3, 0.6], [[0.01, 0.07], [0.9, 0.07]], 300))
+    X.append(np.random.multivariate_normal([35.3, 9.6], [[0.001, 0.007], [0.009, 0.007]], 300))
     y.append(np.array([7]*300))
-    X.append(np.random.multivariate_normal([0.7, 0.2], [[0.03, 0.06], [0.01, 0.5]], 230))
+    X.append(np.random.multivariate_normal([80.7, 90.2], [[0.003, 0.006], [0.001, 0.005]], 230))
     y.append(np.array([8]*230))
-    X.append(np.random.multivariate_normal([1.0, 1.2], [[0.3, 0.6], [0.1, 0.5]], 430))
+    X.append(np.random.multivariate_normal([10.0, 1000.2], [[0.003, 0.006], [0.001, 0.005]], 430))
     y.append(np.array([0]*430))
 
     X = np.vstack(X[0:7])
     y = np.hstack(y[0:7])
 
-    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.3, rt_stp=0.1, lmda=0.7)
+    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.3, rt_stp=0.05, lmda=0.6)
 
-    print onndr.fit(X, y)
+    onndr.fit(X, y)
