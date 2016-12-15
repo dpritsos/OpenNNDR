@@ -12,7 +12,7 @@ class OpenNNDR(object):
 
         # Initilising the rt and dictionary of the class vectors arrays.
         self.rt = 0.0
-        self.cls_d = {}
+        self.cls_d = dict()
 
         # Definind the hyper-paramter arguments which will be used for the optimisation process...
         # ...of finding the empiricaly optimal rt (ration-therhold) value.
@@ -23,9 +23,8 @@ class OpenNNDR(object):
             raise Exception("The ratio-therhold optimisation step value should in range 0.0 to 1.0")
         self.rt_stp = rt_stp
 
-        if rt_stp < 0.0 or rt_stp > 1.0:
-            raise Exception("The ratio-therhold optimisation step value should in range 0.0 to 1.0")
-
+        if lmda < 0.0 or lmda > 1.0:
+            raise Exception("The lamda valid range is 0.0 to 1.0")
         self.lmda = lmda
 
     def split(self, y):
@@ -108,9 +107,12 @@ class OpenNNDR(object):
         # Calculating Known-Samples Accuracy and Uknown-Samples Accuracy.
         AKS = crrt_knw / float(kvld_pre.size)
         AUS = uknw_crrt / float(uknw_pre.size)
-
+        print AKS, AUS
+        print ((1.0 - self.lmda) * AUS)
+        print (self.lmda * AKS)
+        print (self.lmda * AKS) + ((1.0 - self.lmda) * AUS)
         # Calculating (and returing) the Nromalized Accuracy.
-        return self.lmda * AKS + (1 - self.lmda) * AUS
+        return (self.lmda * AKS) + ((1.0 - self.lmda) * AUS)
 
     def fit(self, X, y):
 
@@ -197,7 +199,7 @@ class OpenNNDR(object):
 
                 ##############################
                 kvld_exp.append(y[kvld_inds])
-                uknw_exp.append(y[ukwn_inds])
+                uknw_exp.append(np.zeros(ukwn_inds.size))
 
             # Calculating and keeping the NA Score for this rt threshold.
             rtz[rt_i] = rt
@@ -222,7 +224,7 @@ class OpenNNDR(object):
         return self.cls_d, self.rt
 
     def predict(self, X):
-        return self._predict(self, X, self.cls_d, self.rt)
+        return self._predict(X, self.cls_d, self.rt)
 
     def _predict(self, X, cls_d, rt):
 
@@ -230,36 +232,41 @@ class OpenNNDR(object):
         cls_tgs = np.sort(cls_d.keys())
 
         # Classifing validation samples (Known and Uknown).
-        pre_Ds = np.zeros((cls_tgs.size, X.shape[0]), dtype=np.float)
-        pre_y = np.zeros_like(pre_Ds)
+        pre_minds_pcls = np.zeros((cls_tgs.size, X.shape[0]), dtype=np.float)
+        pre_y = np.zeros_like(pre_minds_pcls)
 
-        # Calculating the for-classification data classification factor.
-        X_nf = np.sqrt(np.diag(np.matmul(cls_d[ctg], X.T)), dtype=np.float)
+        # Calculating data normilization factor.
+        X_nf = np.sqrt(np.diag(np.matmul(X, X.T)), dtype=np.float)
 
         for i, ctg in enumerate(cls_tgs):
 
-            # Calculating the distancies.
-            pre_Ds[i, :] = 1.0 - np.matmul(cls_d[ctg], X.T)
+            # Calculating Cosine Distance normilization factor.
+            cls_d_nf = np.sqrt(np.diag(np.matmul(cls_d[ctg], cls_d[ctg].T)), dtype=np.float)
             clsd_X_nf = np.matmul(
-                np.sqrt(np.diag(np.matmul(cls_d[ctg], cls_d[ctg].T)), dtype=np.float).T,
-                X_nf
+                cls_d_nf.reshape(cls_d_nf.size, 1),
+                X_nf.reshape(1, X_nf.size)
             )
-            pre_Ds[i, :] = multiply(pre_Ds[i, :], clsd_X_nf)
+
+            # Calculating the Cosine distancies.
+            pre_ds_pcls = np.multiply(1.0 - np.matmul(cls_d[ctg], X.T), clsd_X_nf)
+
+            # Getting the miminum distance values per samples per class.
+            pre_minds_pcls[i, :] = np.min(pre_ds_pcls, axis=0)
 
         # ###Calculating R and classify based on this rt
 
         # Getting the first min distance.
-        min_pre_Ds_idx = np.argmin(pre_Ds, axis=1)
-        min_pre_Ds = ukwn_mds_pcls[min_pre_Ds_idx]
+        minds_idx = np.argmin(pre_minds_pcls, axis=0)
+        min_ds = pre_minds_pcls[minds_idx,  np.arange(pre_minds_pcls.shape[1])]
 
         # Setting Inf the fist min distances posistion for finding the second mins.
-        pre_Ds[min_pre_Ds_idx] = np.Inf
+        pre_minds_pcls[minds_idx, np.arange(pre_minds_pcls.shape[1])] = np.Inf
 
         # Calculating R rationz.
-        R = min_pre_Ds / np.argmin(pre_Ds, axis=1)
+        R = min_ds / np.min(pre_minds_pcls, axis=0)
 
         # Calculating the Predicition based on this rt threshold.
-        pre_y = np.array([cls_tgs[min_idx] for min_idx in min_pre_Ds_idx])
+        pre_y = np.array([cls_tgs[min_idx] for min_idx in minds_idx])
         pre_y[np.where(R > rt)] = 0
 
         return pre_y
@@ -286,9 +293,11 @@ if __name__ == '__main__':
     X.append(np.random.multivariate_normal([10.0, 1000.2], [[0.003, 0.006], [0.001, 0.005]], 430))
     y.append(np.array([0]*430))
 
-    X = np.vstack(X[0:7])
-    y = np.hstack(y[0:7])
+    tr_X = np.vstack(X[1:7])
+    tr_y = np.hstack(y[1:7])
 
-    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.3, rt_stp=0.05, lmda=0.6)
+    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.3, rt_stp=0.05, lmda=0.3)
 
-    onndr.fit(X, y)
+    onndr.fit(tr_X, tr_y)
+
+    print onndr.score_rt(onndr.predict(X[8]), onndr.predict(X[0]), y[8], y[0])
