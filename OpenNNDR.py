@@ -39,43 +39,48 @@ class OpenNNDR(object):
         # Calculating the number of Unique iteration depeding on Uknown number of splits.
         fc = np.math.factorial
         unq_itr = fc(unq_cls_tgs.size) / (fc(ukwn_cls_num) * fc(unq_cls_tgs.size - ukwn_cls_num))
+        print unq_itr
 
         # List of arrays of indeces, one list for each unique iteration.
         trn_inds, kvld_inds, ukwn_inds, tgs_combs = list(), list(), list(), list()
 
         # Starting Random Selection of tags Class Spliting.
+
+        # Init Selecting the class tags for training.
+        uknw_cls_tgs = np.random.choice(unq_cls_tgs, ukwn_cls_num, replace=False)
         itr = 0
+        uknw_tgs_combs = list()
+
         while True:
 
             # Selecting the class tags for training.
             uknw_cls_tgs = np.random.choice(unq_cls_tgs, ukwn_cls_num, replace=False)
 
-            # Keeping the combination for verifiing that they are unique.
-            uknw_tgs_combs.append(uknw_cls_tgs)
-
             # Increasing the number of interation only if are all unique, else skip the rest...
             # ... of the this loop and find and other combination in order to be unique.
             ucomb_found = False
-            sz = np.vstack(uknw_tgs_combs).shape[0]
+            sz = len(uknw_tgs_combs)
             for i in range(sz):
-                for j in range(sz):
-                    if i != j:
-                        if np.array_equal(uknw_tgs_combs[i], uknw_tgs_combs[j]):
-                            ucomb_found = True
+                if np.array_equal(uknw_cls_tgs, uknw_tgs_combs[i]):
+                    ucomb_found = True
+
+            # Keeping the combination for verifiing that they are unique.
+            uknw_tgs_combs.append(uknw_cls_tgs)
+
             if ucomb_found:
                 continue
             else:
                 itr += 1
 
             # Getting the Uknown validation-samples indeces of Uknwon class tags.
-            ukwn_inds.append(np.where(np.in1d(y, ukwn_cls_tags) == True)[0])
+            ukwn_inds.append(np.where(np.in1d(y, uknw_cls_tgs) == True)[0])
 
             # Getting the Uknown class tags.
             known_cls_tgs = unq_cls_tgs[np.where(np.in1d(unq_cls_tgs, uknw_cls_tgs) == False)[0]]
 
             # Spliting the indeces of Known class tags to Training and Validation.
             knwn_idns = np.where(np.in1d(y, known_cls_tgs) == True)[0]
-            knwn_idns_num = knwn_idns_num.shape[0]
+            knwn_idns_num = knwn_idns.shape[0]
             tr_idns_num = int(np.ceil(knwn_idns_num * self.slt_ptg))
 
             # Suffling the indeces before Spliting to Known Training/Validation splits.
@@ -184,7 +189,7 @@ class OpenNNDR(object):
                 kvld_pre.append(pre_kvld)
                 uknw_pre.append(pre_ukwn)
 
-                ##############################################
+                ##############################
                 kvld_exp.append(y[kvld_inds])
                 uknw_exp.append(y[ukwn_inds])
 
@@ -252,6 +257,29 @@ class OpenNNDR(object):
 
 if __name__ == '__main__':
 
-    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.3, rt_stp=0.1)
+    X, y = list(), list()
+    X.append(np.random.multivariate_normal([0.1, 0.1], [[0.07, 0.02], [0.07, 0.5]], 110))
+    y.append(np.array([1]*110))
+    X.append(np.random.multivariate_normal([0.2, 0.2], [[0.08, 0.01], [0.5, 0.7]], 150))
+    y.append(np.array([2]*150))
+    X.append(np.random.multivariate_normal([0.5, 0.3], [[0.01, 0.04], [0.9, 0.5]], 300))
+    y.append(np.array([3]*300))
+    X.append(np.random.multivariate_normal([0.8, 0.1], [[0.05, 0.01], [0.07, 0.5]], 200))
+    y.append(np.array([4]*200))
+    X.append(np.random.multivariate_normal([0.1, 0.7], [[0.07, 0.07], [0.8, 0.05]], 280))
+    y.append(np.array([5]*280))
+    X.append(np.random.multivariate_normal([0.9, 0.1], [[0.09, 0.01], [0.6, 0.1]], 230))
+    y.append(np.array([6]*230))
+    X.append(np.random.multivariate_normal([0.3, 0.6], [[0.01, 0.07], [0.9, 0.07]], 300))
+    y.append(np.array([7]*300))
+    X.append(np.random.multivariate_normal([0.7, 0.2], [[0.03, 0.06], [0.01, 0.5]], 230))
+    y.append(np.array([8]*230))
+    X.append(np.random.multivariate_normal([1.0, 1.2], [[0.3, 0.6], [0.1, 0.5]], 430))
+    y.append(np.array([0]*430))
 
-    print onndr.split(np.random.randint(10, size=100))[1]
+    X = np.vstack(X[0:7])
+    y = np.hstack(y[0:7])
+
+    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.3, rt_stp=0.1, lmda=0.7)
+
+    print onndr.fit(X, y)
