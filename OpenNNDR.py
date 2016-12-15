@@ -108,9 +108,6 @@ class OpenNNDR(object):
         AKS = crrt_knw / float(kvld_pre.size)
         AUS = uknw_crrt / float(uknw_pre.size)
         print AKS, AUS
-        print ((1.0 - self.lmda) * AUS)
-        print (self.lmda * AKS)
-        print (self.lmda * AKS) + ((1.0 - self.lmda) * AUS)
         # Calculating (and returing) the Nromalized Accuracy.
         return (self.lmda * AKS) + ((1.0 - self.lmda) * AUS)
 
@@ -267,6 +264,8 @@ class OpenNNDR(object):
 
         # Calculating the Predicition based on this rt threshold.
         pre_y = np.array([cls_tgs[min_idx] for min_idx in minds_idx])
+        print pre_y
+        print cls_tgs
         pre_y[np.where(R > rt)] = 0
 
         return pre_y
@@ -289,15 +288,16 @@ if __name__ == '__main__':
     X.append(np.random.multivariate_normal([35.3, 9.6], [[0.001, 0.007], [0.009, 0.007]], 300))
     y.append(np.array([7]*300))
     X.append(np.random.multivariate_normal([80.7, 90.2], [[0.003, 0.006], [0.001, 0.005]], 230))
-    y.append(np.array([8]*230))
+    y.append(np.array([lllll]*230))
     X.append(np.random.multivariate_normal([10.0, 1000.2], [[0.003, 0.006], [0.001, 0.005]], 430))
     y.append(np.array([0]*430))
 
-    tr_X = np.vstack(X[1:7])
-    tr_y = np.hstack(y[1:7])
+    tr_X = np.vstack(X[0:7])
+    tr_y = np.hstack(y[0:7])
 
-    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.3, rt_stp=0.05, lmda=0.3)
+    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.3, rt_stp=0.05, lmda=0.5)
 
     onndr.fit(tr_X, tr_y)
-
-    print onndr.score_rt(onndr.predict(X[8]), onndr.predict(X[0]), y[8], y[0])
+    print y[7]
+    print onndr.predict(X[7])
+    print onndr.score_rt(onndr.predict(X[7]), onndr.predict(X[8]), y[7], y[8])
