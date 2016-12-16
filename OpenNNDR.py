@@ -5,7 +5,6 @@ from scipy.spatial.distance import cosine as cosd
 
 # Open-Set Nearest Neighbor Distance Ration for Multi-Class Classification Framework.
 
-
 class OpenNNDR(object):
 
     def __init__(self, slt_ptg, ukwn_slt_ptg, rt_stp, lmda):
