@@ -107,8 +107,9 @@ class OpenNNDR(object):
         # Calculating Known-Samples Accuracy and Uknown-Samples Accuracy.
         AKS = crrt_knw / float(kvld_pre.size)
         AUS = uknw_crrt / float(uknw_pre.size)
-        print AKS, AUS
+
         # Calculating (and returing) the Nromalized Accuracy.
+        # print AKS, AUS
         return (self.lmda * AKS) + ((1.0 - self.lmda) * AUS)
 
     def fit(self, X, y):
@@ -213,10 +214,7 @@ class OpenNNDR(object):
         self.cls_d = dict([(ctg, X[np.where(y == ctg)[0], :]) for ctg in unq_ctg_arr])
 
         # Keeping the rt that maximizes NA.
-        print rtz
         self.rt = rtz[np.argmax(NAz)]
-        print NAz
-        print self.rt
 
         return self.cls_d, self.rt
 
@@ -245,7 +243,7 @@ class OpenNNDR(object):
             )
 
             # Calculating the Cosine distancies.
-            pre_ds_pcls = np.multiply(1.0 - np.matmul(cls_d[ctg], X.T), clsd_X_nf)
+            pre_ds_pcls = 1.0 - np.divide(np.matmul(cls_d[ctg], X.T), clsd_X_nf)
 
             # Getting the miminum distance values per samples per class.
             pre_minds_pcls[i, :] = np.min(pre_ds_pcls, axis=0)
@@ -264,40 +262,48 @@ class OpenNNDR(object):
 
         # Calculating the Predicition based on this rt threshold.
         pre_y = np.array([cls_tgs[min_idx] for min_idx in minds_idx])
-        print pre_y
-        print cls_tgs
         pre_y[np.where(R > rt)] = 0
 
         return pre_y
 
 if __name__ == '__main__':
 
+    from matplotlib import pyplot as plt
+
     X, y = list(), list()
-    X.append(np.random.multivariate_normal([0.1, 0.1], [[0.007, 0.002], [0.007, 0.005]], 110))
+    X.append(np.random.multivariate_normal([0.1, 0.9], [[0.0001, 0.001], [0.001, 0.001]], 110))
     y.append(np.array([1]*110))
-    X.append(np.random.multivariate_normal([5.2, 5.2], [[0.008, 0.001], [0.005, 0.007]], 150))
+    X.append(np.random.multivariate_normal([0.2, 0.8], [[0.0008, 0.001], [0.005, 0.007]], 150))
     y.append(np.array([2]*150))
-    X.append(np.random.multivariate_normal([20.5, 20.3], [[0.003, 0.004], [0.009, 0.005]], 300))
+    X.append(np.random.multivariate_normal([0.3, 0.7], [[0.0003, 0.004], [0.009, 0.005]], 300))
     y.append(np.array([3]*300))
-    X.append(np.random.multivariate_normal([60.8, 50.1], [[0.005, 0.001], [0.007, 0.005]], 200))
+    X.append(np.random.multivariate_normal([0.4, 0.6], [[0.0005, 0.001], [0.007, 0.005]], 200))
     y.append(np.array([4]*200))
-    X.append(np.random.multivariate_normal([1.1, 100.7], [[0.007, 0.007], [0.008, 0.005]], 280))
+    X.append(np.random.multivariate_normal([0.5, 0.5], [[0.0001, 0.001], [0.001, 0.001]], 280))
     y.append(np.array([5]*280))
-    X.append(np.random.multivariate_normal([50.9, 7.1], [[0.009, 0.001], [0.006, 0.001]], 230))
+    X.append(np.random.multivariate_normal([0.6, 0.4], [[0.0009, 0.001], [0.006, 0.001]], 230))
     y.append(np.array([6]*230))
-    X.append(np.random.multivariate_normal([35.3, 9.6], [[0.001, 0.007], [0.009, 0.007]], 300))
+    X.append(np.random.multivariate_normal([0.7, 0.3], [[0.001, 0.007], [0.009, 0.007]], 300))
     y.append(np.array([7]*300))
-    X.append(np.random.multivariate_normal([80.7, 90.2], [[0.003, 0.006], [0.001, 0.005]], 230))
-    y.append(np.array([lllll]*230))
-    X.append(np.random.multivariate_normal([10.0, 1000.2], [[0.003, 0.006], [0.001, 0.005]], 430))
+
+    X.append(np.random.multivariate_normal([0.1, 0.9], [[0.001, 0.001], [0.001, 0.001]], 200))
+    y.append(np.array([1]*200))
+    X.append(np.random.multivariate_normal([-0.9, -0.1], [[0.003, 0.006], [0.001, 0.005]], 430))
     y.append(np.array([0]*430))
+
+    for x in X:
+        plt.plot(x[:, 0], x[:, 1])
+    plt.show()
 
     tr_X = np.vstack(X[0:7])
     tr_y = np.hstack(y[0:7])
+    # print tr_y
 
-    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.3, rt_stp=0.05, lmda=0.5)
-
+    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.5, rt_stp=0.05, lmda=0.5)
     onndr.fit(tr_X, tr_y)
-    print y[7]
-    print onndr.predict(X[7])
+    # print
+    # print np.hstack((y[7], y[8]))
+    print np.hstack(y[7::])
+    print onndr.predict(np.vstack(X[7::]))
+
     print onndr.score_rt(onndr.predict(X[7]), onndr.predict(X[8]), y[7], y[8])
