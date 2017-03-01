@@ -2,25 +2,40 @@
 
 import numpy as np
 from scipy.spatial.distance import cosine as cosd
+import time as tm
+
+
+cdef extern from "math.h":
+    cdef double sqrt(double x) nogil
 
 # Open-Set Nearest Neighbor Distance Ration for Multi-Class Classification Framework.
 
-class OpenNNDR(object):
+cdef class OpenNNDR:
 
-    def __init__(self, slt_ptg, ukwn_slt_ptg, rt_stp, lmda):
+    cdef double rt
+    cdef double slt_ptg
+    cdef double ukwn_slt_ptg
+    cdef double [::1] rt_lims_stp
+    cdef double lmda
 
-        # Initilising the rt and dictionary of the class vectors arrays.
+    def __init__(self, slt_ptg, ukwn_slt_ptg, rt_lims_stp, lmda):
+
+        # Initilising the rt.
         self.rt = 0.0
-        self.cls_d = dict()
 
         # Definind the hyper-paramter arguments which will be used for the optimisation process...
         # ...of finding the empiricaly optimal rt (ration-therhold) value.
         self.slt_ptg = slt_ptg
         self.ukwn_slt_ptg = ukwn_slt_ptg
 
-        if rt_stp < 0.0 or rt_stp > 1.0:
-            raise Exception("The ratio-therhold optimisation step value should in range 0.0 to 1.0")
-        self.rt_stp = rt_stp
+        if (rt_lims_stp[0] <= 0.0 or rt_lims_stp[0] >= 1.0) and \
+            (rt_lims_stp[1] <= 0.0 or rt_lims_stp[1] >= 1.0) and \
+                (rt_lims_stp[2] < 0.0 or rt_lims_stp[2] > 1.0):
+            raise Exception(
+                "The ratio-therhold optimisation step and limits value" +
+                "should in range 0.0 to 1.0"
+            )
+        self.rt_lims_stp = np.array(rt_lims_stp)
 
         if lmda < 0.0 or lmda > 1.0:
             raise Exception("The lamda valid range is 0.0 to 1.0")
@@ -117,13 +132,13 @@ class OpenNNDR(object):
         trn_inds_lst, kvld_inds_lst, ukwn_inds_lst, unq_ctg_arr = self.split(y)
 
         # Calculating the range of rt values to be selected for optimisation.
-        rt_range = np.arange(0.5, 1.0, self.rt_stp)
+        rt_range = np.arange(self.rt_lims_stp[0], self.rt_lims_stp[1], self.rt_lims_stp[2])
 
         # Optimising the rt threshold for every split. Keeping the rt with the best NA.
         rtz = np.zeros(rt_range.size, dtype=np.float)
         NAz = np.zeros(rt_range.size, dtype=np.float)
 
-        for rt_i, rt in enumerate(np.arange(0.5, 1.0, self.rt_stp)):
+        for rt_i, rt in enumerate(rt_range):
 
             # Calculating prediction per split.
 
@@ -140,15 +155,20 @@ class OpenNNDR(object):
                 ukwn_mds_pcls = np.zeros((unq_trn_ctgs.size, ukwn_inds.size), dtype=np.float)
                 pre_ukwn = np.zeros((unq_trn_ctgs.size, ukwn_inds.size), dtype=np.float)
 
+                start_tm = tm.time()
+
                 # Normilize all data for caclulating faster the Cosine Distance/Similarity.
                 trvl_X = X[np.hstack([trn_inds, kvld_inds, ukwn_inds])]
                 norm_X = np.divide(
                         trvl_X,
                         np.sqrt(
-                            np.diag(np.dot(trvl_X, trvl_X.T)),
+                            np.diag(self.dot2d(trvl_X, trvl_X.T)),
                             dtype=np.float
                         ).reshape(trvl_X.shape[0], 1)
                     )
+
+                timel = tm.gmtime(tm.time() - start_tm)[3:6] + ((tm.time() - int(start_tm))*1000,)
+                print "Time elapsed : %d:%d:%d:%d" % timel
 
                 for i, ctg in enumerate(unq_trn_ctgs):
 
@@ -157,12 +177,12 @@ class OpenNNDR(object):
 
                     # Calculating the distancies.
                     kvld_mds_pcls[i, :] = 1.0 - np.min(
-                        np.matmul(norm_X[cls_tr_inds, :], norm_X[kvld_inds, :].T),
+                        self.dot2d_ds(norm_X[cls_tr_inds, :], norm_X[kvld_inds, :].T),
                         axis=0
                     )
 
                     ukwn_mds_pcls[i, :] = 1.0 - np.min(
-                        np.matmul(norm_X[cls_tr_inds, :], norm_X[ukwn_inds, :].T),
+                        self.dot2d_ds(norm_X[cls_tr_inds, :], norm_X[ukwn_inds, :].T),
                         axis=0
                     )
 
@@ -263,7 +283,79 @@ class OpenNNDR(object):
         pre_y = np.array([cls_tgs[min_idx] for min_idx in minds_idx])
         pre_y[np.where(R > rt)] = 0
 
-        return pre_y
+        return pre_y, R
+
+    cdef double [:, ::1] dot2d(self, double [:, ::1] m1, double [:, ::1] m2):
+
+        # Matrix index variables.
+        cdef unsigned int i, j, k
+        cdef unsigned int I = m1.shape[0]
+        cdef unsigned int J = m2.shape[1]
+        cdef unsigned int K = m1.shape[1]
+
+        # Creating the numpy.array for results and its memory view
+        cdef double [:, ::1] res = np.zeros((I, J), dtype=np.float)
+
+        # Calculating the dot product.
+        with nogil:
+            for i in range(I):
+                for j in range(J):
+                    for k in range(K):
+                        res[i, j] += m1[i, k] * m2[k, j]
+
+        return res
+
+    cdef double vdot(self, double [::1] v1, double [::1] v2):
+
+        # Matrix index variables.
+        cdef unsigned int i
+        cdef unsigned int I = v1.shape[0]
+
+        # Initializing the result variable.
+        cdef double res = <double>0.0
+
+        # Calculating the dot product.
+        with nogil:
+            for i in range(I):
+                res += v1[i] * v2[i]
+
+        return res
+
+    cdef double [:, ::1] dot2d_ds(self, double [:, ::1] m1, double [::1] m2):
+
+        # Matrix index variables.
+        cdef unsigned int i, j
+        cdef unsigned int I = m1.shape[0]
+        cdef unsigned int J = m2.shape[0]
+
+        # Creating the numpy.array for results and its memory view
+        cdef double [:, ::1] res = np.zeros((I, J), dtype=np.float)
+
+        # Calculating the dot product.
+        with nogil:
+            for i in range(I):
+                for j in range(J):
+                    res[i, j] = m1[i, j] * m2[j]
+
+        return res
+
+    cdef double [::1] dot1d_ds(self, double [::1] v, double [::1] m):
+
+        # Matrix index variables.
+        cdef unsigned int i
+        cdef unsigned int I = v.shape[0]
+
+        # Creating the numpy.array for results and its memory view
+        cdef double [::1] res = np.zeros((I), dtype=np.float)
+
+        # Calculating the dot product.
+        with nogil:
+            for i in range(I):
+                res[i] = v[i] * m[i]
+
+        return res
+
+
 
 if __name__ == '__main__':
 
@@ -298,11 +390,13 @@ if __name__ == '__main__':
     tr_y = np.hstack(y[0:7])
     # print tr_y
 
-    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.5, rt_stp=0.05, lmda=0.5)
-    onndr.fit(tr_X, tr_y)
+    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.5, rt_lims_stp=0.05, lmda=0.5)
+    cls_d, rt = onndr.fit(tr_X, tr_y)
+    print rt
     # print
     # print np.hstack((y[7], y[8]))
     print np.hstack(y[7::])
-    print onndr.predict(np.vstack(X[7::]))
+    pre_y, pre_r = onndr.predict(np.vstack(X[7::]))
+    print pre_y, pre_r
 
-    print onndr.score_rt(onndr.predict(X[7]), onndr.predict(X[8]), y[7], y[8])
+    print onndr.score_rt(onndr.predict(X[7])[0], onndr.predict(X[8])[0], y[7], y[8])
