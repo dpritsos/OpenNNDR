@@ -175,8 +175,8 @@ class OpenNNDR(object):
                     start_tm = tm.time()
 
                     # Calculating the distancies.
-                    kvld_mds_pcls[i, :] = 1.0 - np.min(
-                        np.matmul(norm_X[cls_tr_inds, :], norm_X[kvld_inds, :].T),
+                    kvld_mds_pcls[i, :] = np.min(
+                        1.0 - np.matmul(norm_X[cls_tr_inds, :], norm_X[kvld_inds, :].T),
                         axis=0
                     )
 
@@ -185,8 +185,8 @@ class OpenNNDR(object):
 
                     start_tm = tm.time()
 
-                    ukwn_mds_pcls[i, :] = 1.0 - np.min(
-                        np.matmul(norm_X[cls_tr_inds, :], norm_X[ukwn_inds, :].T),
+                    ukwn_mds_pcls[i, :] = np.min(
+                        1.0 - np.matmul(norm_X[cls_tr_inds, :], norm_X[ukwn_inds, :].T),
                         axis=0
                     )
 
@@ -325,7 +325,7 @@ if __name__ == '__main__':
     tr_y = np.hstack(y[0:7])
     # print tr_y
 
-    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.5, rt_lims_stp=[0.3, 1.0, 0.1], lmda=0.5)
+    onndr = OpenNNDR(slt_ptg=0.3, ukwn_slt_ptg=0.3, rt_lims_stp=[0.5, 1.0, 0.1], lmda=0.6)
     cls_d, rt = onndr.fit(tr_X, tr_y)
     print rt
     # print

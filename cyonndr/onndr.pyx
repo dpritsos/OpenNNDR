@@ -1,22 +1,23 @@
 # -*- coding: utf-8 -*-
+# cython: profile=False
+# cython: cdivision=True
+# cython: boundscheck=False
+# cyhton: wraparound=False
 
 import numpy as np
-from scipy.spatial.distance import cosine as cosd
-import time as tm
+cimport numpy as cnp
+from libc.stdlib cimport abort, malloc, free
+from cython.parallel import parallel, prange
+from cython.view cimport array as cvarray
 
+import time as tm
 
 cdef extern from "math.h":
     cdef double sqrt(double x) nogil
 
 # Open-Set Nearest Neighbor Distance Ration for Multi-Class Classification Framework.
 
-cdef class OpenNNDR:
-
-    cdef double rt
-    cdef double slt_ptg
-    cdef double ukwn_slt_ptg
-    cdef double [::1] rt_lims_stp
-    cdef double lmda
+class OpenNNDR(object):
 
     def __init__(self, slt_ptg, ukwn_slt_ptg, rt_lims_stp, lmda):
 
@@ -41,90 +42,6 @@ cdef class OpenNNDR:
             raise Exception("The lamda valid range is 0.0 to 1.0")
         self.lmda = lmda
 
-    def split(self, y):
-
-        # Calculating the sub-split class sizes for Training, for Known-Testing, Unknown-Testing.
-        unq_cls_tgs = np.unique(y)
-        ukwn_cls_num = int(np.ceil(unq_cls_tgs.size * self.ukwn_slt_ptg))
-        # tr_cls_num = int(np.ceil(unq_cls_tgs.size * self.slt_ptg))
-        # kvld_cls_num = int(np.ceil((unq_cls_tgs.size - tr_cls_num) * self.ukwn_slt_ptg))
-
-        # Calculating the number of Unique iteration depeding on Uknown number of splits.
-        fc = np.math.factorial
-        unq_itr = fc(unq_cls_tgs.size) / (fc(ukwn_cls_num) * fc(unq_cls_tgs.size - ukwn_cls_num))
-
-        # List of arrays of indeces, one list for each unique iteration.
-        trn_inds, kvld_inds, ukwn_inds, tgs_combs = list(), list(), list(), list()
-
-        # Starting Random Selection of tags Class Spliting.
-
-        # Init Selecting the class tags for training.
-        uknw_cls_tgs = np.random.choice(unq_cls_tgs, ukwn_cls_num, replace=False)
-        itr = 0
-        uknw_tgs_combs = list()
-
-        while True:
-
-            # Selecting the class tags for training.
-            uknw_cls_tgs = np.random.choice(unq_cls_tgs, ukwn_cls_num, replace=False)
-
-            # Increasing the number of interation only if are all unique, else skip the rest...
-            # ... of the this loop and find and other combination in order to be unique.
-            ucomb_found = False
-            sz = len(uknw_tgs_combs)
-            for i in range(sz):
-                if np.array_equal(uknw_cls_tgs, uknw_tgs_combs[i]):
-                    ucomb_found = True
-
-            # Keeping the combination for verifiing that they are unique.
-            uknw_tgs_combs.append(uknw_cls_tgs)
-
-            if ucomb_found:
-                continue
-            else:
-                itr += 1
-
-            # Getting the Uknown validation-samples indeces of Uknwon class tags.
-            ukwn_inds.append(np.where(np.in1d(y, uknw_cls_tgs) == True)[0])
-
-            # Getting the Uknown class tags.
-            known_cls_tgs = unq_cls_tgs[np.where(np.in1d(unq_cls_tgs, uknw_cls_tgs) == False)[0]]
-
-            # Spliting the indeces of Known class tags to Training and Validation.
-            knwn_idns = np.where(np.in1d(y, known_cls_tgs) == True)[0]
-            knwn_idns_num = knwn_idns.shape[0]
-            tr_idns_num = int(np.ceil(knwn_idns_num * self.slt_ptg))
-
-            # Suffling the indeces before Spliting to Known Training/Validation splits.
-            np.random.shuffle(knwn_idns)
-
-            # Getting the training-samples indeces.
-            trn_inds.append(knwn_idns[0:tr_idns_num])
-
-            # Getting the known validation-samples indeces.
-            kvld_inds.append(knwn_idns[tr_idns_num::])
-
-            # When unique iteration have reached the requiered number.
-            if itr == unq_itr:
-                break
-
-        return trn_inds, kvld_inds, ukwn_inds, unq_cls_tgs
-
-    def score_rt(self, kvld_pre, uknw_pre, kvld_exp, uknw_exp):
-
-        # Normilized Accuracy will be used for this implementation. That is, for the multi-class...
-        # ...classification, the correct-prediction over the total known and unkown predictions...
-        # ...respectively. The normalized-accuracy NA is the weightied sum of the two accuracies.
-        crrt_knw = np.sum(np.equal(kvld_pre, kvld_exp))
-        uknw_crrt = np.sum(np.equal(uknw_pre, uknw_exp))
-
-        # Calculating Known-Samples Accuracy and Uknown-Samples Accuracy.
-        AKS = crrt_knw / float(kvld_pre.size)
-        AUS = uknw_crrt / float(uknw_pre.size)
-
-        # Calculating (and returing) the Nromalized Accuracy.
-        # print AKS, AUS
-        return (self.lmda * AKS) + ((1.0 - self.lmda) * AUS)
 
     def fit(self, X, y):
 
@@ -158,17 +75,17 @@ cdef class OpenNNDR:
                 start_tm = tm.time()
 
                 # Normilize all data for caclulating faster the Cosine Distance/Similarity.
-                trvl_X = X[np.hstack([trn_inds, kvld_inds, ukwn_inds])]
-                norm_X = np.divide(
-                        trvl_X,
-                        np.sqrt(
-                            np.diag(self.dot2d(trvl_X, trvl_X.T)),
-                            dtype=np.float
-                        ).reshape(trvl_X.shape[0], 1)
-                    )
+                # trvl_X = X[np.hstack([trn_inds, kvld_inds, ukwn_inds])]
+                # trvl_XT = trvl_X.T
+                # trvl_XT = trvl_XT.copy(order='C')
+                # norm_X = np.divide(
+                #         trvl_X,
+                #         np.sqrt(
+                #             np.diag(self.dot2d(trvl_X, trvl_XT)),
+                #             dtype=np.float
+                #         ).reshape(trvl_X.shape[0], 1)
+                #     )
 
-                timel = tm.gmtime(tm.time() - start_tm)[3:6] + ((tm.time() - int(start_tm))*1000,)
-                print "Time elapsed : %d:%d:%d:%d" % timel
 
                 for i, ctg in enumerate(unq_trn_ctgs):
 
@@ -176,15 +93,18 @@ cdef class OpenNNDR:
                     cls_tr_inds = np.where(y[trn_inds] == ctg)[0]
 
                     # Calculating the distancies.
-                    kvld_mds_pcls[i, :] = 1.0 - np.min(
-                        self.dot2d_ds(norm_X[cls_tr_inds, :], norm_X[kvld_inds, :].T),
-                        axis=0
-                    )
+                    cdists = np.zeros(cls_tr_inds.size, dtype=np.float)
+                    cdists = cosdis_2d(X[cls_tr_inds, :], X[kvld_inds, :])
+                    print cdists
+                    kvld_mds_pcls[i, :] = np.min(cdists, axis=0)
 
-                    ukwn_mds_pcls[i, :] = 1.0 - np.min(
-                        self.dot2d_ds(norm_X[cls_tr_inds, :], norm_X[ukwn_inds, :].T),
-                        axis=0
-                    )
+                    cdists = np.zeros(cls_tr_inds.size, dtype=np.float)
+                    cdists = cosdis_2d(X[cls_tr_inds, :], X[ukwn_inds, :])
+                    ukwn_mds_pcls[i, :] = np.min(cdists, axis=0)
+
+                timel = tm.gmtime(tm.time() - start_tm)[3:6] + ((tm.time() - int(start_tm))*1000,)
+                print "Time elapsed : %d:%d:%d:%d" % timel
+
 
                 # ###Calculating R and classify based on this rt
 
@@ -237,10 +157,7 @@ cdef class OpenNNDR:
 
         return self.cls_d, self.rt
 
-    def predict(self, X):
-        return self._predict(X, self.cls_d, self.rt)
-
-    def _predict(self, X, cls_d, rt):
+    def predict(self, X, cls_d, rt):
 
         # Getting Class-tags cls_d
         cls_tgs = np.sort(cls_d.keys())
@@ -285,118 +202,155 @@ cdef class OpenNNDR:
 
         return pre_y, R
 
-    cdef double [:, ::1] dot2d(self, double [:, ::1] m1, double [:, ::1] m2):
+    def split(onndr, y):
 
-        # Matrix index variables.
-        cdef unsigned int i, j, k
-        cdef unsigned int I = m1.shape[0]
-        cdef unsigned int J = m2.shape[1]
-        cdef unsigned int K = m1.shape[1]
+        # Calculating the sub-split class sizes for Training, for Known-Testing, Unknown-Testing.
+        unq_cls_tgs = np.unique(y)
+        ukwn_cls_num = int(np.ceil(unq_cls_tgs.size * onndr.ukwn_slt_ptg))
 
-        # Creating the numpy.array for results and its memory view
-        cdef double [:, ::1] res = np.zeros((I, J), dtype=np.float)
+        # Calculating the number of Unique iteration depeding on Uknown number of splits.
+        fc = np.math.factorial
+        unq_itr = fc(unq_cls_tgs.size) / (fc(ukwn_cls_num) * fc(unq_cls_tgs.size - ukwn_cls_num))
 
-        # Calculating the dot product.
-        with nogil:
-            for i in range(I):
-                for j in range(J):
-                    for k in range(K):
-                        res[i, j] += m1[i, k] * m2[k, j]
+        # List of arrays of indeces, one list for each unique iteration.
+        trn_inds, kvld_inds, ukwn_inds, tgs_combs = list(), list(), list(), list()
 
-        return res
+        # Starting Random Selection of tags Class Spliting.
 
-    cdef double vdot(self, double [::1] v1, double [::1] v2):
+        # Init Selecting the class tags for training.
+        uknw_cls_tgs = np.random.choice(unq_cls_tgs, ukwn_cls_num, replace=False)
+        itr = 0
+        uknw_tgs_combs = list()
 
-        # Matrix index variables.
-        cdef unsigned int i
-        cdef unsigned int I = v1.shape[0]
+        while True:
 
-        # Initializing the result variable.
-        cdef double res = <double>0.0
+            # Selecting the class tags for training.
+            uknw_cls_tgs = np.random.choice(unq_cls_tgs, ukwn_cls_num, replace=False)
 
-        # Calculating the dot product.
-        with nogil:
-            for i in range(I):
-                res += v1[i] * v2[i]
+            # Increasing the number of interation only if are all unique, else skip the rest...
+            # ... of the this loop and find and other combination in order to be unique.
+            ucomb_found = False
+            sz = len(uknw_tgs_combs)
+            for i in range(sz):
+                if np.array_equal(uknw_cls_tgs, uknw_tgs_combs[i]):
+                    ucomb_found = True
 
-        return res
+            # Keeping the combination for verifiing that they are unique.
+            uknw_tgs_combs.append(uknw_cls_tgs)
 
-    cdef double [:, ::1] dot2d_ds(self, double [:, ::1] m1, double [::1] m2):
+            if ucomb_found:
+                continue
+            else:
+                itr += 1
 
-        # Matrix index variables.
-        cdef unsigned int i, j
-        cdef unsigned int I = m1.shape[0]
-        cdef unsigned int J = m2.shape[0]
+            # Getting the Uknown validation-samples indeces of Uknwon class tags.
+            ukwn_inds.append(np.where(np.in1d(y, uknw_cls_tgs) == True)[0])
 
-        # Creating the numpy.array for results and its memory view
-        cdef double [:, ::1] res = np.zeros((I, J), dtype=np.float)
+            # Getting the Uknown class tags.
+            known_cls_tgs = unq_cls_tgs[np.where(np.in1d(unq_cls_tgs, uknw_cls_tgs) == False)[0]]
 
-        # Calculating the dot product.
-        with nogil:
-            for i in range(I):
-                for j in range(J):
-                    res[i, j] = m1[i, j] * m2[j]
+            # Spliting the indeces of Known class tags to Training and Validation.
+            knwn_idns = np.where(np.in1d(y, known_cls_tgs) == True)[0]
+            knwn_idns_num = knwn_idns.shape[0]
+            tr_idns_num = int(np.ceil(knwn_idns_num * onndr.slt_ptg))
 
-        return res
+            # Suffling the indeces before Spliting to Known Training/Validation splits.
+            np.random.shuffle(knwn_idns)
 
-    cdef double [::1] dot1d_ds(self, double [::1] v, double [::1] m):
+            # Getting the training-samples indeces.
+            trn_inds.append(knwn_idns[0:tr_idns_num])
 
-        # Matrix index variables.
-        cdef unsigned int i
-        cdef unsigned int I = v.shape[0]
+            # Getting the known validation-samples indeces.
+            kvld_inds.append(knwn_idns[tr_idns_num::])
 
-        # Creating the numpy.array for results and its memory view
-        cdef double [::1] res = np.zeros((I), dtype=np.float)
+            # When unique iteration have reached the requiered number.
+            if itr == unq_itr:
+                break
 
-        # Calculating the dot product.
-        with nogil:
-            for i in range(I):
-                res[i] = v[i] * m[i]
+        return trn_inds, kvld_inds, ukwn_inds, unq_cls_tgs
 
-        return res
+    def score_rt(onndr, kvld_pre, uknw_pre, kvld_exp, uknw_exp):
+
+        # Normilized Accuracy will be used for this implementation. That is, for the multi-class...
+        # ...classification, the correct-prediction over the total known and unkown predictions...
+        # ...respectively. The normalized-accuracy NA is the weightied sum of the two accuracies.
+        crrt_knw = np.sum(np.equal(kvld_pre, kvld_exp))
+        uknw_crrt = np.sum(np.equal(uknw_pre, uknw_exp))
+
+        # Calculating Known-Samples Accuracy and Uknown-Samples Accuracy.
+        AKS = crrt_knw / float(kvld_pre.size)
+        AUS = uknw_crrt / float(uknw_pre.size)
+
+        # Calculating (and returing) the Nromalized Accuracy.
+        # print AKS, AUS
+        return (onndr.lmda * AKS) + ((1.0 - onndr.lmda) * AUS)
 
 
+cdef double [:, ::1] cosdis_2d(double [:, ::1] m1, double [:, ::1] m2):
 
-if __name__ == '__main__':
+    # Matrix index variables.
+    cdef:
+        unsigned int i, j, k
+        unsigned int m1_I = m1.shape[0]
+        unsigned int m1_J = m1.shape[1]
+        unsigned int m2_I = m1.shape[0]
+        unsigned int m2_J = m2.shape[1]
+        double [::1] m1_norms
+        double [::1] m2_norms
+        double [:, ::1] csdis_vect
+        # double csdis_vect[m1_I][m2_I]
+        # double m1_norms[m1_I]
+        # double m2_norms[m1_J]
 
-    from matplotlib import pyplot as plt
+    m1_norms = cvarray(shape=(m1_I,), itemsize=sizeof(double), format="d")
+    m2_norms = cvarray(shape=(m2_I,), itemsize=sizeof(double), format="d")
+    csdis_vect = cvarray(shape=(m1_I, m2_J), itemsize=sizeof(double), format="d")
 
-    X, y = list(), list()
-    X.append(np.random.multivariate_normal([0.1, 0.9], [[0.0001, 0.001], [0.001, 0.001]], 110))
-    y.append(np.array([1]*110))
-    X.append(np.random.multivariate_normal([0.2, 0.8], [[0.0008, 0.001], [0.005, 0.007]], 150))
-    y.append(np.array([2]*150))
-    X.append(np.random.multivariate_normal([0.3, 0.7], [[0.0003, 0.004], [0.009, 0.005]], 300))
-    y.append(np.array([3]*300))
-    X.append(np.random.multivariate_normal([0.4, 0.6], [[0.0005, 0.001], [0.007, 0.005]], 200))
-    y.append(np.array([4]*200))
-    X.append(np.random.multivariate_normal([0.5, 0.5], [[0.0001, 0.001], [0.001, 0.001]], 280))
-    y.append(np.array([5]*280))
-    X.append(np.random.multivariate_normal([0.6, 0.4], [[0.0009, 0.001], [0.006, 0.001]], 230))
-    y.append(np.array([6]*230))
-    X.append(np.random.multivariate_normal([0.7, 0.3], [[0.001, 0.007], [0.009, 0.007]], 300))
-    y.append(np.array([7]*300))
+    # The following operatsion taking place in the non-gill and parallel...
+    # ...openmp emviroment.
+    with nogil, parallel():
 
-    X.append(np.random.multivariate_normal([0.1, 0.9], [[0.001, 0.001], [0.001, 0.001]], 200))
-    y.append(np.array([1]*200))
-    X.append(np.random.multivariate_normal([-0.9, -0.1], [[0.003, 0.006], [0.001, 0.005]], 430))
-    y.append(np.array([0]*430))
+        # Calculating the Norms for the first matrix.
+        # m1_norms = <double *> malloc(sizeof(double) * m1_I)
+        # if m1_norms == NULL:
+        #     abort()
 
-    for x in X:
-        plt.plot(x[:, 0], x[:, 1])
-    plt.show()
+        for i in prange(m1_I, schedule='guided'):
 
-    tr_X = np.vstack(X[0:7])
-    tr_y = np.hstack(y[0:7])
-    # print tr_y
+            # Calculating Sum.
+            for j in range(m1_J):
+                m1_norms[i] += m1[i, j] * m1[i, j]
 
-    onndr = OpenNNDR(slt_ptg=0.5, ukwn_slt_ptg=0.5, rt_lims_stp=0.05, lmda=0.5)
-    cls_d, rt = onndr.fit(tr_X, tr_y)
-    print rt
-    # print
-    # print np.hstack((y[7], y[8]))
-    print np.hstack(y[7::])
-    pre_y, pre_r = onndr.predict(np.vstack(X[7::]))
-    print pre_y, pre_r
+            # Calculating the Square root of the sum
+            m1_norms[i] = sqrt(m1_norms[i])
 
-    print onndr.score_rt(onndr.predict(X[7])[0], onndr.predict(X[8])[0], y[7], y[8])
+        # Calculating the Norms for the second Trasposed matrix.
+        # NOTE: It is expected to be trasposed.
+        # m2_norms = <double *> malloc(sizeof(double) * m2_J)
+        # if m2_norms == NULL:
+        #     abort()
+
+        for j in prange(m2_J, schedule='guided'):
+
+            # Calculating Sum.
+            for i in range(m2_I):
+                m2_norms[j] += m1[j, i] * m1[j, i]
+
+            # Calculating the Square root of the sum
+            m2_norms[j] = sqrt(m1_norms[j])
+
+        # Calculating the cosine distances product.
+        for i in prange(m1_I, schedule='guided'):
+            for j in range(m2_J):
+
+                # Calculating the elemnt-wise sum of products.
+                for k in range(m1_J):
+                    csdis_vect[i, j] += m1[i, k] * m2[k, j]
+
+                # Normalizing with the products of the respective vector norms.
+                csdis_vect[i, j] = csdis_vect[i, j] / (m1_norms[i] * m2_norms[j])
+
+        # Giving the temporary stack memory back to the OS.
+        # free(m1_norms)
+        # free(m2_norms)
+    return csdis_vect
