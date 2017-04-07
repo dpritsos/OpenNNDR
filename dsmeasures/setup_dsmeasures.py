@@ -4,14 +4,14 @@ from Cython.Build import cythonize
 
 ext_modules = [
     Extension(
-        "onndr",
-        ["onndr.pyx"],
+        "dsmeasures",
+        ["dsmeasures.pyx"],
         extra_compile_args=['-fopenmp'],
         extra_link_args=['-fopenmp'],
     )
 ]
 
 setup(
-    name='onndr-parallel',
+    name='dsmeasures-parallel',
     ext_modules=cythonize(ext_modules),
 )

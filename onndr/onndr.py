@@ -1,8 +1,7 @@
-# -*- coding: utf-8 -*-
 
 import numpy as np
-# from scipy.spatial.distance import cosine as cosd
 import time as tm
+from ..dsmeasures.dsmeasures import cosdis_2d, eudis_2d
 
 
 # Open-Set Nearest Neighbor Distance Ration for Multi-Class Classification Framework.
@@ -10,9 +9,8 @@ class OpenNNDR(object):
 
     def __init__(self, slt_ptg, ukwn_slt_ptg, rt_lims_stp, lmda):
 
-        # Initilising the rt and dictionary of the class vectors arrays.
+        # Initilising the rt.
         self.rt = 0.0
-        self.cls_d = dict()
 
         # Definind the hyper-paramter arguments which will be used for the optimisation process...
         # ...of finding the empiricaly optimal rt (ration-therhold) value.
@@ -26,61 +24,274 @@ class OpenNNDR(object):
                 "The ratio-therhold optimisation step and limits value" +
                 "should in range 0.0 to 1.0"
             )
-
-        self.rt_lims_stp = rt_lims_stp
+        self.rt_lims_stp = np.array(rt_lims_stp)
 
         if lmda < 0.0 or lmda > 1.0:
             raise Exception("The lamda valid range is 0.0 to 1.0")
         self.lmda = lmda
 
+    def fit(self, X, y):
+
+        # NOTE: Hopfully this will always prevent potential "Overflow errors" while...
+        # calculations from numpy and from cython C level functions.
+        X = np.array(X, dtype=np.float64)
+
+        # Spliting the Training and Validation (Known and Uknown).
+        trn_inds_lst, kvld_inds_lst, ukwn_inds_lst, unq_ctg_arr = self.split(y)
+
+        # Calculating all the distance between Training and Validation samples (and Uknown samples)
+        kvld_minds_pcls_pslt, ukwn_minds_pcls_pslt = list(), list()
+
+        for trn_inds, kvld_inds, ukwn_inds in zip(trn_inds_lst, kvld_inds_lst, ukwn_inds_lst):
+
+            # Getting the unique training-set class tags for this split.
+            unq_trn_ctgs = np.unique(y[trn_inds])
+
+            # Classifing validation samples (Known and Uknown).
+            kvld_mds_pcls = np.zeros((unq_trn_ctgs.size, kvld_inds.size), dtype=np.float64)
+            pre_kvld = np.zeros((unq_trn_ctgs.size, kvld_inds.size), dtype=np.float64)
+            ukwn_mds_pcls = np.zeros((unq_trn_ctgs.size, ukwn_inds.size), dtype=np.float64)
+            pre_ukwn = np.zeros((unq_trn_ctgs.size, ukwn_inds.size), dtype=np.float64)
+
+            # start_tm = tm.time()
+
+            # print unq_trn_ctgs
+            for i, ctg in enumerate(unq_trn_ctgs):
+
+                # For this class-tag training inds.
+                cls_tr_inds = np.where(y[trn_inds] == ctg)[0]
+
+                # Calculating the distancies.
+                cdists = np.array(eudis_2d(X[cls_tr_inds, :], X[kvld_inds, :]), dtype=np.float64)
+                kvld_mds_pcls[i, :] = np.min(cdists, axis=0)
+
+                cdists = np.array(eudis_2d(X[cls_tr_inds, :], X[ukwn_inds, :]), dtype=np.float64)
+                ukwn_mds_pcls[i, :] = np.min(cdists, axis=0)
+
+            # timel = tm.gmtime(tm.time() - start_tm)[3:6] + ((tm.time() - int(start_tm))*1000,)
+            # print "Time elapsed : %d:%d:%d:%d" % timel
+
+            # Keeping distances, per class, per split.
+            kvld_minds_pcls_pslt.append(kvld_mds_pcls)
+            ukwn_minds_pcls_pslt.append(ukwn_mds_pcls)
+
+        # Calculating minimum distances and R rations per Split.
+        min_kvld_idx_l, min_ukwn_idx_l, kvld_min_l, min_ukwn_l = [], [], [], []
+        knR_l, uknR_l = [], []
+
+        for kvld_mds_pcls, ukwn_mds_pcls in zip(kvld_minds_pcls_pslt, ukwn_minds_pcls_pslt):
+
+            # print kvld_mds_pcls
+            # Getting the first min distance.
+            min_kvld_idx = np.argmin(kvld_mds_pcls, axis=0)  # == min_kvld_idx
+            min_ukwn_idx = np.argmin(ukwn_mds_pcls, axis=0)  # == min_ukwn_idx
+            kvld_min = kvld_mds_pcls[min_kvld_idx, np.arange(kvld_mds_pcls.shape[1])]
+            min_ukwn = ukwn_mds_pcls[min_ukwn_idx, np.arange(ukwn_mds_pcls.shape[1])]
+
+            # Setting Inf the fist min distances posistion for finding the second mins.
+            kvld_mds_pcls[min_kvld_idx, np.arange(kvld_mds_pcls.shape[1])] = np.Inf
+            ukwn_mds_pcls[min_ukwn_idx, np.arange(ukwn_mds_pcls.shape[1])] = np.Inf
+
+            # Calculating R rationz.
+            # Preventing Division by Zero.
+            kvld_min_2 = np.min(kvld_mds_pcls, axis=0)
+            kvld_min_2[np.where(kvld_min_2 == 0.0)[0]] = 0.000001
+
+            min_ukwn_2 = np.min(ukwn_mds_pcls, axis=0)
+            min_ukwn_2[np.where(min_ukwn_2 == 0.0)[0]] = 0.000001
+
+            knR = kvld_min / kvld_min_2
+            uknR = min_ukwn / min_ukwn_2
+
+            # Keeping the minimum distances and Rationsz.
+            min_kvld_idx_l.append(min_kvld_idx)
+            min_ukwn_idx_l.append(min_ukwn_idx)
+            kvld_min_l.append(kvld_min)
+            min_ukwn_l.append(min_ukwn)
+            knR_l.append(knR)
+            uknR_l.append(uknR)
+
+        # Calculating R and classify based on this rt
+
+        # Calculating the range of rt values to be selected for optimisation.
+        rt_range = np.arange(self.rt_lims_stp[0], self.rt_lims_stp[1], self.rt_lims_stp[2])
+
+        # Optimising the rt threshold for every split. Keeping the rt with the best NA.
+        rtz = np.zeros(rt_range.size, dtype=np.float64)
+        NAz = np.zeros(rt_range.size, dtype=np.float64)
+
+        print 'init ', NAz
+
+        for rt_i, rt in enumerate(rt_range):
+
+            kwn_pred_pslt, ukwn_perd_pslt, kwn_exp_pslt, ukwn_exp_pslt = [], [], [], []
+
+            for (
+                    kvld_inds,
+                    ukwn_inds,
+                    min_kvld_idx,
+                    min_ukwn_idx,
+                    kvld_min,
+                    min_ukwn,
+                    knR, uknR
+                ) in zip(
+                            kvld_inds_lst,
+                            ukwn_inds_lst,
+                            min_kvld_idx_l,
+                            min_ukwn_idx_l,
+                            kvld_min_l,
+                            min_ukwn_l,
+                            knR_l,
+                            uknR_l
+                        ):
+
+                # Calculating the Predicition based on this rt threshold.
+                # Check this carefully.
+                pre_kvld = np.array([unq_trn_ctgs[min_idx] for min_idx in min_kvld_idx])
+                # Check this carefully.
+                pre_ukwn = np.array([unq_trn_ctgs[min_idx] for min_idx in min_ukwn_idx])
+
+                pre_kvld[np.where(knR > rt)] = 0
+                pre_ukwn[np.where(uknR > rt)] = 0
+
+                # Keeping prediction per split and expected per split.
+                kwn_pred_pslt.append(pre_kvld)
+                ukwn_perd_pslt.append(pre_ukwn)
+
+                kwn_exp_pslt.append(y[kvld_inds])
+                ukwn_exp_pslt.append(np.zeros(ukwn_inds.size))
+
+                # print pre_kvld.shape, y[kvld_inds].shape
+                # print pre_ukwn.shape, ukwn_inds.shape
+
+            # Calculating and keeping the NA Score for this rt threshold.
+            rtz[rt_i] = rt
+            NAz[rt_i] = self.score_rt(
+                np.hstack(kwn_pred_pslt),
+                np.hstack(ukwn_perd_pslt),
+                np.hstack(kwn_exp_pslt),
+                np.hstack(ukwn_exp_pslt)
+            )
+
+        # Separating and keeping the samples for each class. The cls_d is a dictionary of numpy...
+        # ...arrays. Every array is a list of vector for a specifc class tag, which is also a...
+        # ...key value for the dictionary.
+        self.cls_d = dict([(ctg, X[np.where(y == ctg)[0], :]) for ctg in unq_ctg_arr])
+
+        # Keeping the rt that maximizes NA.
+        print NAz
+        self.rt = rtz[np.argmax(NAz)]
+
+        return self.cls_d, self.rt
+
+    def predict(self, X):
+        return self._predict(X, self.cls_d, self.rt)
+
+    def _predict(self, X, cls_d, rt):
+
+        # NOTE: Hopfully this will always prevent potential "Overflow errors" while...
+        # ...calculations from numpy and from cython C level functions.
+        X = np.array(X, dtype=np.float64)
+
+        # Getting Class-tags cls_d
+        cls_tgs = np.sort(cls_d.keys())
+
+        # Classifing validation samples (Known and Uknown).
+        pre_minds_pcls = np.zeros((cls_tgs.size, X.shape[0]), dtype=np.float64)
+        pre_y = np.zeros_like(pre_minds_pcls)
+
+        for i, ctg in enumerate(cls_tgs):
+
+            # Getting for this class-tag the ALL the class vectors slected in training phase.
+            cls_vects = cls_d[ctg]
+
+            # Calculating the distancies of X where are the random samples while testing...
+            # ...or validation phase.
+            pred_dists_per_class = eudis_2d(cls_vects, X)
+
+            # Getting the miminum distance values per samples per class.
+            pre_minds_pcls[i, :] = np.min(pred_dists_per_class, axis=0)
+            # print pre_minds_pcls[i, :]
+
+        # ###Calculating R and classify based on this rt
+
+        # Getting the first min distance.
+        minds_idx = np.argmin(pre_minds_pcls, axis=0)
+        min_ds = pre_minds_pcls[minds_idx,  np.arange(pre_minds_pcls.shape[1])]
+        # print np.sum(np.where((min_ds == 0.0), 1, 0))
+
+        # Setting Inf the fist min distances posistion for finding the second mins.
+        pre_minds_pcls[minds_idx, np.arange(pre_minds_pcls.shape[1])] = np.Inf
+
+        # Calculating R rationz.
+
+        # Preventing Division by Zero.
+        min_ds_2 = np.min(pre_minds_pcls, axis=0)
+        min_ds_2[np.where(min_ds_2 == 0.0)[0]] = 0.000001
+
+        R = min_ds / min_ds_2
+
+        # Calculating the Predicition based on this rt threshold.
+        pre_y = np.array([cls_tgs[min_idx] for min_idx in minds_idx])
+
+        # pre_y[np.where(R > rt)] = 0
+
+        return pre_y, R
+
     def split(self, y):
 
-        # Calculating the sub-split class sizes for Training, for Known-Testing, Unknown-Testing.
+        # Calculating the sub-split class sizes for Training, for Known-Testing,...
+        # ...Unknown-Testing.
         unq_cls_tgs = np.unique(y)
         ukwn_cls_num = int(np.ceil(unq_cls_tgs.size * self.ukwn_slt_ptg))
-        # tr_cls_num = int(np.ceil(unq_cls_tgs.size * self.slt_ptg))
-        # kvld_cls_num = int(np.ceil((unq_cls_tgs.size - tr_cls_num) * self.ukwn_slt_ptg))
 
         # Calculating the number of Unique iteration depeding on Uknown number of splits.
         fc = np.math.factorial
         unq_itr = fc(unq_cls_tgs.size) / (fc(ukwn_cls_num) * fc(unq_cls_tgs.size - ukwn_cls_num))
 
-        # List of arrays of indeces, one list for each unique iteration.
-        trn_inds, kvld_inds, ukwn_inds, tgs_combs = list(), list(), list(), list()
-
-        # Starting Random Selection of tags Class Spliting.
-
-        # Init Selecting the class tags for training.
-        uknw_cls_tgs = np.random.choice(unq_cls_tgs, ukwn_cls_num, replace=False)
+        # Selecting Randomly the Class-tags Splits.
         itr = 0
-        uknw_tgs_combs = list()
+        knw_uknw_tgs_combs = list()
 
         while True:
 
-            # Selecting the class tags for training.
+            # Selecting the unkown class tags.
             uknw_cls_tgs = np.random.choice(unq_cls_tgs, ukwn_cls_num, replace=False)
 
-            # Increasing the number of interation only if are all unique, else skip the rest...
-            # ... of the this loop and find and other combination in order to be unique.
+            # Validating the uniqueness of the randomly selected class-tag as uknown split...
+            # ...Then increasing the number of interation only if are all unique, else skip the...
+            # ...rest of the this loop and find and other combination in order to be unique.
             ucomb_found = False
-            sz = len(uknw_tgs_combs)
-            for i in range(sz):
-                if np.array_equal(uknw_cls_tgs, uknw_tgs_combs[i]):
+            for i in range(len(knw_uknw_tgs_combs)):
+                if np.array_equal(uknw_cls_tgs, knw_uknw_tgs_combs[i][1]):
                     ucomb_found = True
-
-            # Keeping the combination for verifiing that they are unique.
-            uknw_tgs_combs.append(uknw_cls_tgs)
 
             if ucomb_found:
                 continue
             else:
                 itr += 1
 
+            # Getting the known class tags.
+            known_cls_tgs = unq_cls_tgs[
+                np.where(np.in1d(unq_cls_tgs, uknw_cls_tgs) == False)[0]
+            ]
+
+            # Keeping the combinations for unique Known/Uknown class-tags.
+            knw_uknw_tgs_combs.append((known_cls_tgs, uknw_cls_tgs))
+
+            # When unique iteration have reached the requiered number.
+            if itr == unq_itr:
+                break
+
+        # Selecting the Sample Indices based on the Class Known/Uknown tags spliting.
+
+        # Lists of arrays of indeces, one list for each unique iteration.
+        trn_inds, kvld_inds, ukwn_inds, tgs_combs = list(), list(), list(), list()
+
+        for known_cls_tgs, uknw_cls_tgs in knw_uknw_tgs_combs:
+
             # Getting the Uknown validation-samples indeces of Uknwon class tags.
             ukwn_inds.append(np.where(np.in1d(y, uknw_cls_tgs) == True)[0])
-
-            # Getting the Uknown class tags.
-            known_cls_tgs = unq_cls_tgs[np.where(np.in1d(unq_cls_tgs, uknw_cls_tgs) == False)[0]]
 
             # Spliting the indeces of Known class tags to Training and Validation.
             knwn_idns = np.where(np.in1d(y, known_cls_tgs) == True)[0]
@@ -96,13 +307,9 @@ class OpenNNDR(object):
             # Getting the known validation-samples indeces.
             kvld_inds.append(knwn_idns[tr_idns_num::])
 
-            # When unique iteration have reached the requiered number.
-            if itr == unq_itr:
-                break
-
         return trn_inds, kvld_inds, ukwn_inds, unq_cls_tgs
 
-    def score_rt(self, kvld_pre, uknw_pre, kvld_exp, uknw_exp):
+    def score_rt(onndr, kvld_pre, uknw_pre, kvld_exp, uknw_exp):
 
         # Normilized Accuracy will be used for this implementation. That is, for the multi-class...
         # ...classification, the correct-prediction over the total known and unkown predictions...
@@ -116,222 +323,4 @@ class OpenNNDR(object):
 
         # Calculating (and returing) the Nromalized Accuracy.
         # print AKS, AUS
-        return (self.lmda * AKS) + ((1.0 - self.lmda) * AUS)
-
-    def fit(self, X, y):
-
-        # Spliting the Training and Validation (Known and Uknown).
-        trn_inds_lst, kvld_inds_lst, ukwn_inds_lst, unq_ctg_arr = self.split(y)
-
-        # Calculating the range of rt values to be selected for optimisation.
-        rt_range = np.arange(self.rt_lims_stp[0], self.rt_lims_stp[1], self.rt_lims_stp[2])
-
-        print rt_range
-
-        # Optimising the rt threshold for every split. Keeping the rt with the best NA.
-        rtz = np.zeros(rt_range.size, dtype=np.float)
-        NAz = np.zeros(rt_range.size, dtype=np.float)
-
-        for rt_i, rt in enumerate(rt_range):
-
-            # Calculating prediction per split.
-
-            kvld_pre, uknw_pre, kvld_exp, uknw_exp = list(), list(), list(), list()
-
-            for trn_inds, kvld_inds, ukwn_inds in zip(trn_inds_lst, kvld_inds_lst, ukwn_inds_lst):
-
-                # Getting the unique training-set class tags for this split.
-                unq_trn_ctgs = np.unique(y[trn_inds])
-
-                # Classifing validation samples (Known and Uknown).
-                kvld_mds_pcls = np.zeros((unq_trn_ctgs.size, kvld_inds.size), dtype=np.float)
-                pre_kvld = np.zeros((unq_trn_ctgs.size, kvld_inds.size), dtype=np.float)
-                ukwn_mds_pcls = np.zeros((unq_trn_ctgs.size, ukwn_inds.size), dtype=np.float)
-                pre_ukwn = np.zeros((unq_trn_ctgs.size, ukwn_inds.size), dtype=np.float)
-
-                start_tm = tm.time()
-                # Normilize all data for caclulating faster the Cosine Distance/Similarity.
-                trvl_X = X[np.hstack([trn_inds, kvld_inds, ukwn_inds])]
-                norm_X = np.divide(
-                        trvl_X,
-                        np.sqrt(
-                            np.diag(np.dot(trvl_X, trvl_X.T)),
-                            dtype=np.float
-                        ).reshape(trvl_X.shape[0], 1)
-                    )
-                timel = tm.gmtime(tm.time() - start_tm)[3:6] + ((tm.time() - int(start_tm))*1000,)
-                print "Time elapsed : %d:%d:%d:%d" % timel
-
-                for i, ctg in enumerate(unq_trn_ctgs):
-
-                    start_tm = tm.time()
-
-                    # For this class-tag training inds.
-                    cls_tr_inds = np.where(y[trn_inds] == ctg)[0]
-
-                    timel = tm.gmtime(tm.time() - start_tm)[3:6] + ((tm.time() - int(start_tm))*1000,)
-                    print "Time elapsed : %d:%d:%d:%d" % timel
-
-                    start_tm = tm.time()
-
-                    # Calculating the distancies.
-                    kvld_mds_pcls[i, :] = np.min(
-                        1.0 - np.matmul(norm_X[cls_tr_inds, :], norm_X[kvld_inds, :].T),
-                        axis=0
-                    )
-
-                    timel = tm.gmtime(tm.time() - start_tm)[3:6] + ((tm.time() - int(start_tm))*1000,)
-                    print "Time elapsed : %d:%d:%d:%d" % timel
-
-                    start_tm = tm.time()
-
-                    ukwn_mds_pcls[i, :] = np.min(
-                        1.0 - np.matmul(norm_X[cls_tr_inds, :], norm_X[ukwn_inds, :].T),
-                        axis=0
-                    )
-
-                    timel = tm.gmtime(tm.time() - start_tm)[3:6] + ((tm.time() - int(start_tm))*1000,)
-                    print "Time elapsed : %d:%d:%d:%d" % timel
-
-                # ###Calculating R and classify based on this rt
-
-                # Getting the first min distance.
-                min_kvld_idx = np.argmin(kvld_mds_pcls, axis=0)  # == min_kvld_idx
-                min_ukwn_idx = np.argmin(ukwn_mds_pcls, axis=0)  # == min_ukwn_idx
-                kvld_min = kvld_mds_pcls[min_kvld_idx, np.arange(kvld_mds_pcls.shape[1])]
-                min_ukwn = ukwn_mds_pcls[min_ukwn_idx, np.arange(ukwn_mds_pcls.shape[1])]
-
-                # Setting Inf the fist min distances posistion for finding the second mins.
-                kvld_mds_pcls[min_kvld_idx, np.arange(kvld_mds_pcls.shape[1])] = np.Inf
-                ukwn_mds_pcls[min_ukwn_idx, np.arange(ukwn_mds_pcls.shape[1])] = np.Inf
-
-                # Calculating R rationz.
-                knR = kvld_min / np.min(kvld_mds_pcls, axis=0)
-                uknR = min_ukwn / np.min(ukwn_mds_pcls, axis=0)
-
-                # Calculating the Predicition based on this rt threshold.
-                # Check this carefully.
-                pre_kvld = np.array([unq_trn_ctgs[min_idx] for min_idx in min_kvld_idx])
-                # Check this carefully.
-                pre_ukwn = np.array([unq_trn_ctgs[min_idx] for min_idx in min_ukwn_idx])
-                pre_kvld[np.where(knR > rt)] = 0
-                pre_ukwn[np.where(uknR > rt)] = 0
-
-                # Keeping prediction prediction per split and expected per split.
-                kvld_pre.append(pre_kvld)
-                uknw_pre.append(pre_ukwn)
-
-                ##############################
-                kvld_exp.append(y[kvld_inds])
-                uknw_exp.append(np.zeros(ukwn_inds.size))
-
-            # Calculating and keeping the NA Score for this rt threshold.
-            rtz[rt_i] = rt
-            NAz[rt_i] = self.score_rt(
-                np.hstack(kvld_pre),
-                np.hstack(uknw_pre),
-                np.hstack(kvld_exp),
-                np.hstack(uknw_exp)
-            )
-
-        # Separating and keeping the samples for each class. The cls_d is a dictionary of numpy...
-        # ...arrays. Every array is a list of vector for a specifc class tag, which is also a...
-        # ...key value for the dictionary.
-        self.cls_d = dict([(ctg, X[np.where(y == ctg)[0], :]) for ctg in unq_ctg_arr])
-
-        # Keeping the rt that maximizes NA.
-        self.rt = rtz[np.argmax(NAz)]
-
-        return self.cls_d, self.rt
-
-    def predict(self, X):
-        return self._predict(X, self.cls_d, self.rt)
-
-    def _predict(self, X, cls_d, rt):
-
-        # Getting Class-tags cls_d
-        cls_tgs = np.sort(cls_d.keys())
-
-        # Classifing validation samples (Known and Uknown).
-        pre_minds_pcls = np.zeros((cls_tgs.size, X.shape[0]), dtype=np.float)
-        pre_y = np.zeros_like(pre_minds_pcls)
-
-        # Calculating data normilization factor.
-        X_nf = np.sqrt(np.diag(np.matmul(X, X.T)), dtype=np.float)
-
-        for i, ctg in enumerate(cls_tgs):
-
-            # Calculating Cosine Distance normilization factor.
-            cls_d_nf = np.sqrt(np.diag(np.matmul(cls_d[ctg], cls_d[ctg].T)), dtype=np.float)
-            clsd_X_nf = np.matmul(
-                cls_d_nf.reshape(cls_d_nf.size, 1),
-                X_nf.reshape(1, X_nf.size)
-            )
-
-            # Calculating the Cosine distancies.
-            pre_ds_pcls = 1.0 - np.divide(np.matmul(cls_d[ctg], X.T), clsd_X_nf)
-
-            # Getting the miminum distance values per samples per class.
-            pre_minds_pcls[i, :] = np.min(pre_ds_pcls, axis=0)
-
-        # ###Calculating R and classify based on this rt
-
-        # Getting the first min distance.
-        minds_idx = np.argmin(pre_minds_pcls, axis=0)
-        min_ds = pre_minds_pcls[minds_idx,  np.arange(pre_minds_pcls.shape[1])]
-
-        # Setting Inf the fist min distances posistion for finding the second mins.
-        pre_minds_pcls[minds_idx, np.arange(pre_minds_pcls.shape[1])] = np.Inf
-
-        # Calculating R rationz.
-        R = min_ds / np.min(pre_minds_pcls, axis=0)
-
-        # Calculating the Predicition based on this rt threshold.
-        pre_y = np.array([cls_tgs[min_idx] for min_idx in minds_idx])
-        pre_y[np.where(R > rt)] = 0
-
-        return pre_y, R
-
-if __name__ == '__main__':
-
-    from matplotlib import pyplot as plt
-
-    X, y = list(), list()
-    X.append(np.random.multivariate_normal([0.1, 0.9], [[0.0001, 0.001], [0.001, 0.001]], 110))
-    y.append(np.array([1]*110))
-    X.append(np.random.multivariate_normal([0.2, 0.8], [[0.0008, 0.001], [0.005, 0.007]], 150))
-    y.append(np.array([2]*150))
-    X.append(np.random.multivariate_normal([0.3, 0.7], [[0.0003, 0.004], [0.009, 0.005]], 300))
-    y.append(np.array([3]*300))
-    X.append(np.random.multivariate_normal([0.4, 0.6], [[0.0005, 0.001], [0.007, 0.005]], 200))
-    y.append(np.array([4]*200))
-    X.append(np.random.multivariate_normal([0.5, 0.5], [[0.0001, 0.001], [0.001, 0.001]], 280))
-    y.append(np.array([5]*280))
-    X.append(np.random.multivariate_normal([0.6, 0.4], [[0.0009, 0.001], [0.006, 0.001]], 230))
-    y.append(np.array([6]*230))
-    X.append(np.random.multivariate_normal([0.7, 0.3], [[0.001, 0.007], [0.009, 0.007]], 300))
-    y.append(np.array([7]*300))
-
-    X.append(np.random.multivariate_normal([0.1, 0.9], [[0.001, 0.001], [0.001, 0.001]], 200))
-    y.append(np.array([1]*200))
-    X.append(np.random.multivariate_normal([-0.9, -0.1], [[0.003, 0.006], [0.001, 0.005]], 430))
-    y.append(np.array([0]*430))
-
-    for x in X:
-        plt.plot(x[:, 0], x[:, 1])
-    plt.show()
-
-    tr_X = np.vstack(X[0:7])
-    tr_y = np.hstack(y[0:7])
-    # print tr_y
-
-    onndr = OpenNNDR(slt_ptg=0.3, ukwn_slt_ptg=0.3, rt_lims_stp=[0.5, 1.0, 0.1], lmda=0.6)
-    cls_d, rt = onndr.fit(tr_X, tr_y)
-    print rt
-    # print
-    # print np.hstack((y[7], y[8]))
-    # print np.hstack(y[7::])
-    pre_y, pre_r = onndr.predict(np.vstack(X[7::]))
-    # print pre_y, pre_r
-
-    print onndr.score_rt(onndr.predict(X[7])[0], onndr.predict(X[8])[0], y[7], y[8])
+        return (onndr.lmda * AKS) + ((1.0 - onndr.lmda) * AUS)
