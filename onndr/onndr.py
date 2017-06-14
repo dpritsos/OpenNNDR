@@ -234,7 +234,7 @@ class OpenNNDR(object):
         # Calculating the Predicition based on this rt threshold.
         pre_y = np.array([cls_tgs[min_idx] for min_idx in minds_idx])
 
-        # pre_y[np.where(R > rt)] = 0
+        pre_y[np.where(R > rt)] = 0
 
         return pre_y, R
 
