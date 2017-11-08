@@ -1,5 +1,8 @@
 #Compiled Sources#
 ##################
 *.pyc
-*.so
 *.c
+*.o
+*.so
+./build/*
+./build
