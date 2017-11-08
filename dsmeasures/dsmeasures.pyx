@@ -10,6 +10,7 @@ import numpy as np
 
 cdef extern from "math.h":
     cdef double sqrt(double x) nogil
+    cdef double acos(double x) nogil
 
 
 cpdef double [:, ::1] cosdis_2d(double [:, ::1] m1, double [:, ::1] m2):
@@ -29,6 +30,9 @@ cpdef double [:, ::1] cosdis_2d(double [:, ::1] m1, double [:, ::1] m2):
         double [::1] m1_norms
         double [::1] m2_norms
         double [:, ::1] csdis_vect
+
+        # Definding Pi constant.
+        double pi = 3.14159265
 
     # Creating the temporary cython arrays.
     m1_norms = cvarray(shape=(m1_I,), itemsize=sizeof(double), format="d")
@@ -50,7 +54,7 @@ cpdef double [:, ::1] cosdis_2d(double [:, ::1] m1, double [:, ::1] m2):
 
         for iz in range(m1_I):
             for jz in range(m2_I):
-                csdis_vect[iz, jz] = 0.0
+                csdis_vect[iz, jz] = -1.0
 
         # Calculating the Norms for the first matrix.
         for i in prange(m1_I, schedule='guided'):
@@ -93,6 +97,9 @@ cpdef double [:, ::1] cosdis_2d(double [:, ::1] m1, double [:, ::1] m2):
 
                 # Normalizing with the products of the respective vector norms.
                 csdis_vect[i, j] = csdis_vect[i, j] / (m1_norms[i] * m2_norms[j])
+
+                # Getting Cosine Distance.
+                csdis_vect[i, j] =  acos(csdis_vect[i, j]) / pi
 
     return csdis_vect
 

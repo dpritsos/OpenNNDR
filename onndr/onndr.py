@@ -1,7 +1,7 @@
 
 import numpy as np
 import time as tm
-from ..dsmeasures.dsmeasures import cosdis_2d, eudis_2d
+from ..dsmeasures.dsmeasures import eudis_2d, cosdis_2d
 
 
 # Open-Set Nearest Neighbor Distance Ration for Multi-Class Classification Framework.
@@ -62,10 +62,10 @@ class OpenNNDR(object):
                 cls_tr_inds = np.where(y[trn_inds] == ctg)[0]
 
                 # Calculating the distancies.
-                cdists = np.array(eudis_2d(X[cls_tr_inds, :], X[kvld_inds, :]), dtype=np.float64)
+                cdists = np.array(cosdis_2d(X[cls_tr_inds, :], X[kvld_inds, :]), dtype=np.float64)
                 kvld_mds_pcls[i, :] = np.min(cdists, axis=0)
 
-                cdists = np.array(eudis_2d(X[cls_tr_inds, :], X[ukwn_inds, :]), dtype=np.float64)
+                cdists = np.array(cosdis_2d(X[cls_tr_inds, :], X[ukwn_inds, :]), dtype=np.float64)
                 ukwn_mds_pcls[i, :] = np.min(cdists, axis=0)
 
             # timel = tm.gmtime(tm.time() - start_tm)[3:6] + ((tm.time() - int(start_tm))*1000,)
@@ -207,7 +207,7 @@ class OpenNNDR(object):
 
             # Calculating the distancies of X where are the random samples while testing...
             # ...or validation phase.
-            pred_dists_per_class = eudis_2d(cls_vects, X)
+            pred_dists_per_class = cosdis_2d(cls_vects, X)
 
             # Getting the miminum distance values per samples per class.
             pre_minds_pcls[i, :] = np.min(pred_dists_per_class, axis=0)
