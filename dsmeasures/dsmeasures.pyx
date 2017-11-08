@@ -99,7 +99,7 @@ cpdef double [:, ::1] cosdis_2d(double [:, ::1] m1, double [:, ::1] m2):
                 csdis_vect[i, j] = csdis_vect[i, j] / (m1_norms[i] * m2_norms[j])
 
                 # Getting Cosine Distance.
-                csdis_vect[i, j] =  acos(csdis_vect[i, j]) / pI
+                csdis_vect[i, j] =  acos(csdis_vect[i, j]) / pi
 
     return csdis_vect
 
