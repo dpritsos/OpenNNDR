@@ -54,7 +54,7 @@ cpdef double [:, ::1] cosdis_2d(double [:, ::1] m1, double [:, ::1] m2):
 
         for iz in range(m1_I):
             for jz in range(m2_I):
-                csdis_vect[iz, jz] = -1.0
+                csdis_vect[iz, jz] = 0.0
 
         # Calculating the Norms for the first matrix.
         for i in prange(m1_I, schedule='guided'):
