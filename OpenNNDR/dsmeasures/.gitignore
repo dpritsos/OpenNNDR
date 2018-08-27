@@ -1,8 +1,6 @@
 #Compiled Sources#
 ##################
 *.pyc
-*.c
-*.o
 *.so
-./build/*
-./build
+build
+*.egg-info
