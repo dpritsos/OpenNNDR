@@ -309,7 +309,7 @@ class OpenNNDR(object):
 
         return trn_inds, kvld_inds, ukwn_inds, unq_cls_tgs
 
-    def score_rt(onndr, kvld_pre, uknw_pre, kvld_exp, uknw_exp):
+    def score_rt(self, kvld_pre, uknw_pre, kvld_exp, uknw_exp):
 
         # Normilized Accuracy will be used for this implementation. That is, for the multi-class...
         # ...classification, the correct-prediction over the total known and unkown predictions...
@@ -323,4 +323,4 @@ class OpenNNDR(object):
 
         # Calculating (and returing) the Nromalized Accuracy.
         # print AKS, AUS
-        return (onndr.lmda * AKS) + ((1.0 - onndr.lmda) * AUS)
+        return (self.lmda * AKS) + ((1.0 - self.lmda) * AUS)
